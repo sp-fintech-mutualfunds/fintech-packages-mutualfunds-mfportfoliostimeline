@@ -35,6 +35,13 @@ class MfPortfoliostimeline
                         'notNull'       => true,
                     ]
                 ),
+                new Column(
+                    'performance_chunks',
+                    [
+                        'type'          => Column::TYPE_JSON,
+                        'notNull'       => true,
+                    ]
+                ),
             ],
             'indexes' => [
                 new Index(
