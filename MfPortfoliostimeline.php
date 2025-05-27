@@ -32,7 +32,21 @@ class MfPortfoliostimeline extends BasePackage
         return $this;
     }
 
-    public function getPortfoliotimelineByPortfolio($portfolio)
+    public function forceRecalculateTimeline($portfolio, $transactionDate)
+    {
+        $this->timeline = $this->getPortfoliotimelineByPortfolio($portfolio, false);
+
+        if (!$this->timeline) {
+            return false;
+        }
+
+        $this->timeline['recalculate'] = true;
+        $this->timeline['recalculate_from_date'] = $transactionDate;
+
+        $this->update($this->timeline);
+    }
+
+    public function getPortfoliotimelineByPortfolio($portfolio, $getCached = true)
     {
         $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
 
@@ -69,7 +83,11 @@ class MfPortfoliostimeline extends BasePackage
         }
 
         //get from  opcache
-        if ($this->opCache) {
+        if ($this->opCache && $getCached) {
+            if (!$this->opCache->checkCache($this->timeline['id'], 'mfportfoliostimeline')) {
+                $this->opCache->setCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
+            }
+
             if ($cachedTimeline = $this->opCache->getCache($this->timeline['id'], 'mfportfoliostimeline')) {
                 $this->timeline = $cachedTimeline;
             }
@@ -80,7 +98,15 @@ class MfPortfoliostimeline extends BasePackage
 
     public function getPortfoliotimelineByPortfolioAndTimeline($portfolio, $getTimelineDate = null, $force = false)
     {
-        set_time_limit(600);
+        //Increase Exectimeout to 10 mins as this process takes time to extract and merge data.
+        if ((int) ini_get('max_execution_time') < 600) {
+            set_time_limit(600);
+        }
+
+        //Increase memory_limit to 1G as the process takes a bit of memory to process the array.
+        if ((int) ini_get('memory_limit') < 1024) {
+            ini_set('memory_limit', '1024M');
+        }
 
         $this->getPortfoliotimelineByPortfolio($portfolio);
 
@@ -174,6 +200,10 @@ class MfPortfoliostimeline extends BasePackage
 
             $timelinePortfolio['performance_chunks'] = $this->timeline['performance_chunks'][$getTimelineDate];
 
+            if ($force) {
+                $this->addResponse('Recalculated timeline for ' . $getTimelineDate, 0);
+            }
+
             return $timelinePortfolio;
         }
 
@@ -182,16 +212,34 @@ class MfPortfoliostimeline extends BasePackage
 
     public function timelineNeedsGeneration($portfolio)
     {
-        $this->getPortfoliotimelineByPortfolio($portfolio);
+        $this->getPortfoliotimelineByPortfolio($portfolio, false);
 
         if (isset($this->timeline['snapshots'])) {
             $numberOfSnapshots = count($this->timeline['snapshots']);
+            $numberOfPerformanceChunks = count($this->timeline['performance_chunks']);
 
-            $startEndDates = (\Carbon\CarbonPeriod::between($portfolio['start_date'], $this->today))->toArray();
+            if ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']) {
+                $recalculateFrom = $this->timeline['recalculate_from_date'];
+            } else {
+                $recalculateFrom = $portfolio['start_date'];
+            }
+
+            $endDate = $this->today;
+
+            $portfolio['transactions'] = msort(array: $portfolio['transactions'], key: 'latest_value_date', preserveKey: true, order: SORT_DESC);
+
+            if ((\Carbon\Carbon::parse($endDate))->gte(\Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['latest_value_date']))) {
+                $endDate = $this->helper->first($portfolio['transactions'])['latest_value_date'];
+            }
+
+            $startEndDates = (\Carbon\CarbonPeriod::between($recalculateFrom, $endDate))->toArray();
             $numberOfDays = count($startEndDates);
 
-            if ($numberOfSnapshots != $numberOfDays) {
-                $this->registerProgressMethods($portfolio, $startEndDates);
+            if ($numberOfSnapshots != $numberOfDays ||
+                $numberOfPerformanceChunks != $numberOfDays ||
+                ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date'])
+            ) {
+                $this->registerProgressMethods($portfolio, $startEndDates, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
 
                 return true;
             }
@@ -316,6 +364,8 @@ class MfPortfoliostimeline extends BasePackage
 
         $totalSnapshots = count($portfolioSnapshots);
 
+        $this->timeline['performance_chunks'][$timelineDate]['timelineDate'] = $timelineDate;
+
         if ($totalSnapshots > 1) {
             if ($totalSnapshots > 7) {
                 $forWeek = $totalSnapshots - 7;
@@ -435,22 +485,29 @@ class MfPortfoliostimeline extends BasePackage
         }
     }
 
-    protected function registerProgressMethods($portfolio, $startEndDates)
+    protected function registerProgressMethods($portfolio, $startEndDates, $forceRecalculateTimeline = false)
     {
-        if ($this->basepackages->progress->checkProgressFile('mfportfolio')) {
-            $this->basepackages->progress->deleteProgressFile('mfportfolio');
+        if ($this->basepackages->progress->checkProgressFile('mfportfoliotimeline')) {
+            $this->basepackages->progress->deleteProgressFile('mfportfoliotimeline');
         }
 
         $progressMethods = [];
 
         foreach ($startEndDates as $startEndDate) {
-            array_push($progressMethods,
-                [
-                    'method'    => 'generatePortfolioTimeline',
-                    'text'      => 'Generate portfolio timeline for ' . $startEndDate->toDateString() . '...',
-                    'args'      => [$portfolio['id'], $startEndDate->toDateString()]
-                ]
-            );
+            $startEndDateString = $startEndDate->toDateString();
+
+            if (!isset($this->timeline['snapshots'][$startEndDateString]) ||
+                !isset($this->timeline['performance_chunks'][$startEndDateString]) ||
+                $forceRecalculateTimeline
+            ) {
+                array_push($progressMethods,
+                    [
+                        'method'    => 'generatePortfolioTimeline',
+                        'text'      => 'Generate portfolio timeline for ' . $startEndDateString . '...',
+                        'args'      => [$portfolio['id'], $startEndDateString, $forceRecalculateTimeline]
+                    ]
+                );
+            }
         }
 
         $this->basepackages->progress->registerMethods($progressMethods);
@@ -477,13 +534,21 @@ class MfPortfoliostimeline extends BasePackage
 
     public function processTimelineNeedsGeneration($data)
     {
-        $progressFile = $this->basepackages->progress->checkProgressFile('mfportfolio');
+        $progressFile = $this->basepackages->progress->checkProgressFile('mfportfoliotimeline');
 
         $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
 
-        $this->timeline = $this->getPortfoliotimelineByPortfolio(['id' => $data['portfolio_id']]);
+        $this->timeline = $this->getPortfoliotimelineByPortfolio(['id' => $data['portfolio_id']], false);
 
-        set_time_limit(600);//10 mins
+        //Increase Exectimeout to 10 mins as this process takes time to extract and merge data.
+        if ((int) ini_get('max_execution_time') < 600) {
+            set_time_limit(600);
+        }
+
+        //Increase memory_limit to 1G as the process takes a bit of memory to process the array.
+        if ((int) ini_get('memory_limit') < 1024) {
+            ini_set('memory_limit', '1024M');
+        }
 
         foreach ($progressFile['allProcesses'] as $process) {
             if ($this->withProgress($process['method'], $process['args']) === false) {
@@ -497,35 +562,41 @@ class MfPortfoliostimeline extends BasePackage
             }
         }
 
-        return true;
-    }
 
-    protected function saveGeneratePortfolioTimeline()
-    {
-    }
-
-    protected function generatePortfolioTimeline($args)
-    {
-        $portfolioId = $args[0];
-        $startEndDate = $args[1];
-
-        $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
-
-        if (!isset($this->timeline['snapshots'][$startEndDate])) {
-            $this->timeline['snapshots'][$startEndDate] = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $portfolioId], false, $startEndDate);
-
-            $this->createChunks($startEndDate);
-        }
+        $this->timeline['snapshots'] = msort(array: $this->timeline['snapshots'], key: 'timelineDate', preserveKey: true);
+        $this->timeline['performance_chunks'] = msort(array: $this->timeline['performance_chunks'], key: 'timelineDate', preserveKey: true);
+        $this->timeline['recalculate'] = null;
+        $this->timeline['recalculate_from_date'] = null;
 
         if ($this->update($this->timeline)) {
-            //Add to opcache
+            //Reset to opcache
             if ($this->opCache) {
-                $this->opCache->setCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
+                $this->opCache->resetCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
             }
 
             return true;
         }
 
         return false;
+    }
+
+    protected function generatePortfolioTimeline($args)
+    {
+        $portfolioId = $args[0];
+        $startEndDate = $args[1];
+        $forceRecalculateTimeline = $args[2];
+
+        $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
+
+        if (!isset($this->timeline['snapshots'][$startEndDate]) ||
+            !isset($this->timeline['performance_chunks'][$startEndDate]) ||
+            $forceRecalculateTimeline
+        ) {
+            $this->timeline['snapshots'][$startEndDate] = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $portfolioId], false, $startEndDate);
+
+            $this->createChunks($startEndDate);
+        }
+
+        return true;
     }
 }

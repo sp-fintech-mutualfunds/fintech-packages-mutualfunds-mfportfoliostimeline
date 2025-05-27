@@ -13,4 +13,8 @@ class AppsFintechMfPortfoliostimeline extends BaseModel
     public $snapshots;
 
     public $performance_chunks;
+
+    public $recalculate;
+
+    public $recalculate_from_date;
 }

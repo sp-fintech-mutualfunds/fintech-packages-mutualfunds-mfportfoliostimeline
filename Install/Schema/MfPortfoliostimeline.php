@@ -42,6 +42,21 @@ class MfPortfoliostimeline
                         'notNull'       => true,
                     ]
                 ),
+                new Column(
+                    'recalculate',
+                    [
+                        'type'          => Column::TYPE_BOOLEAN,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
+                    'recalculate_from_date',
+                    [
+                        'type'          => Column::TYPE_VARCHAR,
+                        'size'          => 15,
+                        'notNull'       => false
+                    ]
+                )
             ],
             'indexes' => [
                 new Index(
