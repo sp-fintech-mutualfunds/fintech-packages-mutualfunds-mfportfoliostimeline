@@ -3,7 +3,11 @@
 namespace Apps\Fintech\Packages\Mf\Portfoliostimeline\Install;
 
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\Install\Schema\MfPortfoliostimeline;
+use Apps\Fintech\Packages\Mf\Portfoliostimeline\Install\Schema\MfPortfoliostimelinePerformanceChunks;
+use Apps\Fintech\Packages\Mf\Portfoliostimeline\Install\Schema\MfPortfoliostimelineSnapshots;
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimeline;
+use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimelinePerformanceChunks;
+use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimelineSnapshots;
 use System\Base\BasePackage;
 use System\Base\Providers\ModulesServiceProvider\DbInstaller;
 
@@ -17,9 +21,17 @@ class Install extends BasePackage
     {
         $this->databases =
             [
-                'apps_fintech_accounts_users'  => [
+                'apps_fintech_mf_portfoliostimeline'  => [
                     'schema'        => new MfPortfoliostimeline,
                     'model'         => new AppsFintechMfPortfoliostimeline
+                ],
+                'apps_fintech_mf_portfoliostimeline_snapshots'  => [
+                    'schema'        => new MfPortfoliostimelineSnapshots,
+                    'model'         => new AppsFintechMfPortfoliostimelineSnapshots
+                ],
+                'apps_fintech_mf_portfoliostimeline_performance_chunks'  => [
+                    'schema'        => new MfPortfoliostimelinePerformanceChunks,
+                    'model'         => new AppsFintechMfPortfoliostimelinePerformanceChunks
                 ]
             ];
 

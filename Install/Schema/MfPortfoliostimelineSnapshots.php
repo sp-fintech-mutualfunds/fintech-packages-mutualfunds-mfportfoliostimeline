@@ -5,7 +5,7 @@ namespace Apps\Fintech\Packages\Mf\Portfoliostimeline\Install\Schema;
 use Phalcon\Db\Column;
 use Phalcon\Db\Index;
 
-class MfPortfoliostimeline
+class MfPortfoliostimelineSnapshots
 {
     public function columns()
     {
@@ -22,29 +22,14 @@ class MfPortfoliostimeline
                     ]
                 ),
                 new Column(
-                    'portfolio_id',
+                    'timeline_id',
                     [
                         'type'          => Column::TYPE_INTEGER,
                         'notNull'       => true,
                     ]
                 ),
                 new Column(
-                    'recalculate',
-                    [
-                        'type'          => Column::TYPE_BOOLEAN,
-                        'notNull'       => false,
-                    ]
-                ),
-                new Column(
-                    'recalculate_from_date',
-                    [
-                        'type'          => Column::TYPE_VARCHAR,
-                        'size'          => 15,
-                        'notNull'       => false
-                    ]
-                ),
-                new Column(
-                    'mode',
+                    'date',
                     [
                         'type'          => Column::TYPE_VARCHAR,
                         'size'          => 15,
@@ -52,14 +37,7 @@ class MfPortfoliostimeline
                     ]
                 ),
                 new Column(
-                    'snapshots_ids',
-                    [
-                        'type'          => Column::TYPE_JSON,
-                        'notNull'       => true,
-                    ]
-                ),
-                new Column(
-                    'performance_chunks_ids',
+                    'snapshot',
                     [
                         'type'          => Column::TYPE_JSON,
                         'notNull'       => true,
@@ -70,7 +48,8 @@ class MfPortfoliostimeline
                 new Index(
                     'column_UNIQUE',
                     [
-                        'portfolio_id'
+                        'timeline_id',
+                        'date'
                     ],
                     'UNIQUE'
                 )
@@ -78,20 +57,6 @@ class MfPortfoliostimeline
             'options' => [
                 'TABLE_COLLATION' => 'utf8mb4_general_ci'
             ]
-        ];
-    }
-
-    public function indexes()
-    {
-        return
-        [
-            new Index(
-                'column_INDEX',
-                [
-                    'portfolio_id'
-                ],
-                'INDEX'
-            )
         ];
     }
 }
