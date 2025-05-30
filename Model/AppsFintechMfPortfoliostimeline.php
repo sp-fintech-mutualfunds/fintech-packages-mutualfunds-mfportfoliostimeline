@@ -15,9 +15,15 @@ class AppsFintechMfPortfoliostimeline extends BaseModel
 
     public $recalculate_from_date;
 
-    public $mode;
-
     public $snapshots_ids;
 
     public $performance_chunks_ids;
+
+    public $mode;
+
+    public $monthly_months;
+
+    public $monthly_day;
+
+    public $weekly_days;
 }

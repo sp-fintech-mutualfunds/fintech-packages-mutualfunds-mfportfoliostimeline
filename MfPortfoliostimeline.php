@@ -6,6 +6,7 @@ use Apps\Fintech\Packages\Mf\Portfolios\MfPortfolios;
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimeline;
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimelinePerformanceChunks;
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimelineSnapshots;
+use Apps\Fintech\Packages\Mf\Schemes\MfSchemes;
 use System\Base\BasePackage;
 
 class MfPortfoliostimeline extends BasePackage
@@ -25,6 +26,14 @@ class MfPortfoliostimeline extends BasePackage
     protected $portfolioPackage;
 
     protected $timeline;
+
+    public $timelineDateBeingProcessed;
+
+    protected $portfolio;
+
+    protected $portfolioTransactionsDates = [];
+
+    public $portfolioSchemes = [];
 
     public function getTimeline()
     {
@@ -96,15 +105,15 @@ class MfPortfoliostimeline extends BasePackage
                 return false;
             }
 
-            if (!$this->opCache->checkCache($this->timeline['id'], 'mfportfoliostimeline')) {
-                $this->opCache->setCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
-            }
+            // if (!$this->opCache->checkCache($this->timeline['id'], 'mfportfoliostimeline')) {
+            //     $this->opCache->setCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
+            // }
 
-            if ($cachedTimeline = $this->opCache->getCache($this->timeline['id'], 'mfportfoliostimeline')) {
-                $this->timeline = $cachedTimeline;
+            // if ($cachedTimeline = $this->opCache->getCache($this->timeline['id'], 'mfportfoliostimeline')) {
+            //     $this->timeline = $cachedTimeline;
 
-                return $this->timeline;
-            }
+            //     return $this->timeline;
+            // }
         }
 
         $timeline = $this->getByParams($conditions);
@@ -188,9 +197,6 @@ class MfPortfoliostimeline extends BasePackage
             }
         }
 
-        //We need to recalculate here as well if we change any transactions.
-        $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
-
         if (isset($this->timeline['snapshots_ids'][$getTimelineDate]) && !$force) {
             $this->switchModel($this->snapshotsModel);
 
@@ -200,21 +206,24 @@ class MfPortfoliostimeline extends BasePackage
                 $timelinePortfolio = $timelineSnapshot['snapshot'];
             }
         } else {
+            //We need to recalculate here as well if we change any transactions.
+            $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
+
             $timelinePortfolio = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $portfolio['id']], false, $getTimelineDate);
         }
 
-        $timelinePortfolio['beforeStartDateRequested'] = $beforeStartDateRequested;
-        $timelinePortfolio['afterEndDateRequested'] = $afterEndDateRequested;
-        $timelinePortfolio['end_date'] = $endDate;
+        if (isset($this->portfolioPackage)) {
+            $this->addResponse(
+                $this->portfolioPackage->packagesData->responseMessage,
+                $this->portfolioPackage->packagesData->responseCode,
+                $this->portfolioPackage->packagesData->responseData ?? []
+            );
+        }
 
         if ($timelinePortfolio) {
-            if (isset($this->portfolioPackage)) {
-                $this->addResponse(
-                    $this->portfolioPackage->packagesData->responseMessage,
-                    $this->portfolioPackage->packagesData->responseCode,
-                    $this->portfolioPackage->packagesData->responseData ?? []
-                );
-            }
+            $timelinePortfolio['beforeStartDateRequested'] = $beforeStartDateRequested;
+            $timelinePortfolio['afterEndDateRequested'] = $afterEndDateRequested;
+            $timelinePortfolio['end_date'] = $endDate;
 
             if (isset($this->timeline['performance_chunks_ids'][$getTimelineDate]) && !$force) {
                 $this->switchModel($this->performanceChunksModel);
@@ -225,21 +234,17 @@ class MfPortfoliostimeline extends BasePackage
                     $timelinePortfolio['performance_chunks'] = $timelinePerformanceChunk['performance_chunk'];
                 }
             } else {
-                $timelinePortfolio = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $portfolio['id']], false, $getTimelineDate);
-            }
-            trace([$this->timeline, $timelinePortfolio]);
-            if (!isset($this->timeline['performance_chunks'][$getTimelineDate]) || $force) {
-                $this->createChunks($getTimelineDate);
+                // trace(['me']);
+                // $this->createSnapshotChunks($getTimelineDate);
+                // $this->update($this->timeline);
 
-                $this->update($this->timeline);
-
-                //Add to opcache
-                if ($this->opCache) {
-                    $this->opCache->setCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
-                }
+                // //Add to opcache
+                // if ($this->opCache) {
+                //     $this->opCache->setCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
+                // }
             }
 
-            $timelinePortfolio['performance_chunks'] = $this->timeline['performance_chunks'][$getTimelineDate];
+            // $timelinePortfolio['performance_chunks'] = $this->timeline['performance_chunks'][$getTimelineDate];
 
             if ($force) {
                 $this->addResponse('Recalculated timeline for ' . $getTimelineDate, 0);
@@ -263,6 +268,14 @@ class MfPortfoliostimeline extends BasePackage
             return true;
         }
 
+        if (count($this->timeline['snapshots_ids']) !== count($this->timeline['performance_chunks_ids'])) {
+            return true;
+        }
+
+        if (count(array_diff(array_keys($this->timeline['snapshots_ids']), array_keys($this->timeline['performance_chunks_ids']))) > 0) {
+            return true;
+        }
+
         if ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']) {
             return true;
         }
@@ -274,6 +287,11 @@ class MfPortfoliostimeline extends BasePackage
     {
         return
             [
+                'day' =>
+                [
+                    'id'    => 'day',
+                    'name'  => 'Day'
+                ],
                 'week' =>
                 [
                     'id'    => 'week',
@@ -371,144 +389,7 @@ class MfPortfoliostimeline extends BasePackage
         return true;
     }
 
-    protected function createChunks($timelineDate)
-    {
-        if (isset($this->timeline['snapshots'])) {
-            $timelineSnapshots = $this->timeline['snapshots'];
-        } else if (isset($this->timeline['snapshots_ids'])) {
-            $timelineDateKeys = array_keys($this->timeline['snapshots_ids']);
-        }
-
-        $timelineDateKeys = array_keys($this->timeline['snapshots']);
-        $timelineDateKey = array_search($timelineDate, $timelineDateKeys);
-        $portfolioSnapshots = array_slice($this->timeline['snapshots'], 0, $timelineDateKey + 1);
-
-        $portfolioSnapshots = msort(array: $portfolioSnapshots, key: 'timelineDate');
-
-        $totalSnapshots = count($portfolioSnapshots);
-
-        $this->timeline['performance_chunks'][$timelineDate]['timelineDate'] = $timelineDate;
-
-        if ($totalSnapshots > 1) {
-            if ($totalSnapshots > 7) {
-                $forWeek = $totalSnapshots - 7;
-            } else {
-                $forWeek = $totalSnapshots;
-            }
-
-            $this->timeline['performance_chunks'][$timelineDate]['week'] = [];
-            for ($forWeek; $forWeek < $totalSnapshots; $forWeek++) {
-                $this->timeline['performance_chunks'][$timelineDate]['week'][$portfolioSnapshots[$forWeek]['timelineDate']] = [];
-                $weeklyPerformance = &$this->timeline['performance_chunks'][$timelineDate]['week'][$portfolioSnapshots[$forWeek]['timelineDate']];
-                $weeklyPerformance['timelineDate'] = $portfolioSnapshots[$forWeek]['timelineDate'];
-                $weeklyPerformance['invested_amount'] = $portfolioSnapshots[$forWeek]['invested_amount'];
-                $weeklyPerformance['return_amount'] = $portfolioSnapshots[$forWeek]['return_amount'];
-                $weeklyPerformance['profit_loss'] = $portfolioSnapshots[$forWeek]['profit_loss'];
-            }
-        }
-
-        if ($totalSnapshots > 7) {
-            if ($totalSnapshots > 30) {
-                $forMonth = $totalSnapshots - 30;
-            } else {
-                $forMonth = $totalSnapshots;
-            }
-
-            $this->timeline['performance_chunks'][$timelineDate]['month'] = [];
-            for ($forMonth; $forMonth < $totalSnapshots; $forMonth++) {
-                $this->timeline['performance_chunks'][$timelineDate]['month'][$portfolioSnapshots[$forMonth]['timelineDate']] = [];
-                $monthlyPerformance = &$this->timeline['performance_chunks'][$timelineDate]['month'][$portfolioSnapshots[$forMonth]['timelineDate']];
-                $monthlyPerformance['timelineDate'] = $portfolioSnapshots[$forMonth]['timelineDate'];
-                $monthlyPerformance['invested_amount'] = $portfolioSnapshots[$forMonth]['invested_amount'];
-                $monthlyPerformance['return_amount'] = $portfolioSnapshots[$forMonth]['return_amount'];
-                $monthlyPerformance['profit_loss'] = $portfolioSnapshots[$forMonth]['profit_loss'];
-            }
-        }
-
-        if ($totalSnapshots > 30) {
-            if ($totalSnapshots > 365) {
-                $forYear = $totalSnapshots - 365;
-            } else {
-                $forYear = $totalSnapshots;
-            }
-
-            $this->timeline['performance_chunks'][$timelineDate]['year'] = [];
-            for ($forYear; $forYear < $totalSnapshots; $forYear++) {
-                $this->timeline['performance_chunks'][$timelineDate]['year'][$portfolioSnapshots[$forYear]['timelineDate']] = [];
-                $yearlyPerformance = &$this->timeline['performance_chunks'][$timelineDate]['year'][$portfolioSnapshots[$forYear]['timelineDate']];
-                $yearlyPerformance['timelineDate'] = $portfolioSnapshots[$forYear]['timelineDate'];
-                $yearlyPerformance['invested_amount'] = $portfolioSnapshots[$forYear]['invested_amount'];
-                $yearlyPerformance['return_amount'] = $portfolioSnapshots[$forYear]['return_amount'];
-                $yearlyPerformance['profit_loss'] = $portfolioSnapshots[$forYear]['profit_loss'];
-            }
-        }
-
-        if ($totalSnapshots > 365) {
-            if ($totalSnapshots > 1095) {
-                $forThreeYear = $totalSnapshots - 1095;
-            } else {
-                $forThreeYear = $totalSnapshots;
-            }
-
-            $this->timeline['performance_chunks'][$timelineDate]['threeYear'] = [];
-            for ($forThreeYear; $forThreeYear < $totalSnapshots; $forThreeYear++) {
-                $this->timeline['performance_chunks'][$timelineDate]['threeYear'][$portfolioSnapshots[$forThreeYear]['timelineDate']] = [];
-                $threeYearPerformance = &$this->timeline['performance_chunks'][$timelineDate]['threeYear'][$portfolioSnapshots[$forThreeYear]['timelineDate']];
-                $threeYearPerformance['timelineDate'] = $portfolioSnapshots[$forThreeYear]['timelineDate'];
-                $threeYearPerformance['invested_amount'] = $portfolioSnapshots[$forThreeYear]['invested_amount'];
-                $threeYearPerformance['return_amount'] = $portfolioSnapshots[$forThreeYear]['return_amount'];
-                $threeYearPerformance['profit_loss'] = $portfolioSnapshots[$forThreeYear]['profit_loss'];
-            }
-        }
-
-        if ($totalSnapshots > 1095) {
-            if ($totalSnapshots > 1825) {
-                $forFiveYear = $totalSnapshots - 1825;
-            } else {
-                $forFiveYear = $totalSnapshots;
-            }
-
-            $this->timeline['performance_chunks'][$timelineDate]['fiveYear'] = [];
-            for ($forFiveYear; $forFiveYear < $totalSnapshots; $forFiveYear++) {
-                $this->timeline['performance_chunks'][$timelineDate]['fiveYear'][$portfolioSnapshots[$forFiveYear]['timelineDate']] = [];
-                $fiveYearPerformance = &$this->timeline['performance_chunks'][$timelineDate]['fiveYear'][$portfolioSnapshots[$forFiveYear]['timelineDate']];
-                $fiveYearPerformance['timelineDate'] = $portfolioSnapshots[$forFiveYear]['timelineDate'];
-                $fiveYearPerformance['invested_amount'] = $portfolioSnapshots[$forFiveYear]['invested_amount'];
-                $fiveYearPerformance['return_amount'] = $portfolioSnapshots[$forFiveYear]['return_amount'];
-                $fiveYearPerformance['profit_loss'] = $portfolioSnapshots[$forFiveYear]['profit_loss'];
-            }
-        }
-
-        if ($totalSnapshots > 3652) {
-            if ($totalSnapshots > 3652) {
-                $forTenYear = $totalSnapshots - 3652;
-            } else {
-                $forTenYear = $totalSnapshots;
-            }
-
-            $this->timeline['performance_chunks'][$timelineDate]['tenYear'] = [];
-            for ($forTenYear; $forTenYear < $totalSnapshots; $forTenYear++) {
-                $this->timeline['performance_chunks'][$timelineDate]['tenYear'][$portfolioSnapshots[$forTenYear]['timelineDate']] = [];
-                $tenYearPerformance = &$this->timeline['performance_chunks'][$timelineDate]['tenYear'][$portfolioSnapshots[$forTenYear]['timelineDate']];
-                $tenYearPerformance['timelineDate'] = $portfolioSnapshots[$forTenYear]['timelineDate'];
-                $tenYearPerformance['invested_amount'] = $portfolioSnapshots[$forTenYear]['invested_amount'];
-                $tenYearPerformance['return_amount'] = $portfolioSnapshots[$forTenYear]['return_amount'];
-                $tenYearPerformance['profit_loss'] = $portfolioSnapshots[$forTenYear]['profit_loss'];
-            }
-        }
-
-        $this->timeline['performance_chunks'][$timelineDate]['all'] = [];
-        for ($forAll = 0; $forAll < $totalSnapshots; $forAll++) {
-            $this->timeline['performance_chunks'][$timelineDate]['all'][$portfolioSnapshots[$forAll]['timelineDate']] = [];
-            $allPerfornace = &$this->timeline['performance_chunks'][$timelineDate]['all'][$portfolioSnapshots[$forAll]['timelineDate']];
-            $allPerfornace['timelineDate'] = $portfolioSnapshots[$forAll]['timelineDate'];
-            $allPerfornace['invested_amount'] = $portfolioSnapshots[$forAll]['invested_amount'];
-            $allPerfornace['return_amount'] = $portfolioSnapshots[$forAll]['return_amount'];
-            $allPerfornace['profit_loss'] = $portfolioSnapshots[$forAll]['profit_loss'];
-        }
-    }
-
-    protected function registerProgressMethods($portfolio, $datesToProcess, $forceRecalculateTimeline = false)
+    protected function registerProgressMethods($datesToProcess, $forceRecalculateTimeline = false)
     {
         if ($this->basepackages->progress->checkProgressFile('mfportfoliotimeline')) {
             $this->basepackages->progress->deleteProgressFile('mfportfoliotimeline');
@@ -524,8 +405,8 @@ class MfPortfoliostimeline extends BasePackage
                 array_push($progressMethods,
                     [
                         'method'    => 'generatePortfolioTimeline',
-                        'text'      => 'Generate portfolio timeline for ' . $dateToProcess . '...',
-                        'args'      => [$portfolio['id'], $dateToProcess, $forceRecalculateTimeline]
+                        'text'      => 'Generate portfolio timeline for ' . $dateToProcess->toDateString() . '...',
+                        'args'      => [$dateToProcess->toDateString(), $forceRecalculateTimeline]
                     ]
                 );
             }
@@ -557,12 +438,31 @@ class MfPortfoliostimeline extends BasePackage
     {
         $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
 
-        $portfolio = $this->portfolioPackage->getPortfolioById((int) $data['portfolio_id']);
+        $this->schemePackage = $this->usePackage(MfSchemes::class);
 
-        if (!$portfolio) {
+        $this->portfolio = $this->portfolioPackage->getPortfolioById((int) $data['portfolio_id']);
+
+        if (!$this->portfolio) {
             $this->addResponse('Portfolio ID provided incorrect!', 1);
 
             return false;
+        }
+
+        foreach ($this->portfolio['transactions'] as $portfolioTransaction) {
+            array_push($this->portfolioTransactionsDates, $portfolioTransaction['date']);
+
+            if (!isset($this->portfolioSchemes[$portfolioTransaction['amfi_code']])) {
+                $scheme = $this->schemePackage->getSchemeFromAmfiCodeOrSchemeId($portfolioTransaction);
+
+                if (!$scheme || !isset($scheme['navs']['navs'])) {
+                    $this->addResponse('Scheme for portfolio transaction id: ' . $portfolioTransaction['id'] . ' does not exists!', 1);
+
+                    return false;
+                }
+
+                $this->portfolioSchemes[$portfolioTransaction['amfi_code']] = $scheme['navs']['navs'];
+            }
+
         }
 
         $this->timeline = $this->getPortfoliotimelineByPortfolio(['id' => $data['portfolio_id']], false);
@@ -574,59 +474,64 @@ class MfPortfoliostimeline extends BasePackage
         if ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']) {
             $recalculateFrom = $this->timeline['recalculate_from_date'];
         } else {
-            $recalculateFrom = $portfolio['start_date'];
+            $recalculateFrom = $this->portfolio['start_date'];
         }
 
         $endDate = $this->today;
 
-        $portfolio['transactions'] = msort(array: $portfolio['transactions'], key: 'latest_value_date', preserveKey: true, order: SORT_DESC);
-
-        if ((\Carbon\Carbon::parse($endDate))->gte(\Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['latest_value_date']))) {
-            $endDate = $this->helper->first($portfolio['transactions'])['latest_value_date'];
+        if ((\Carbon\Carbon::parse($endDate))->gte(\Carbon\Carbon::parse($this->helper->first($this->portfolio['transactions'])['latest_value_date']))) {
+            $endDate = $this->helper->first($this->portfolio['transactions'])['latest_value_date'];
         }
 
-        $startEndDates = (\Carbon\CarbonPeriod::between($recalculateFrom, $endDate))->toArray();
+        // $datesToProcess = [];
 
-        $datesToProcess = [];
+        // if ($this->timeline['mode'] === 'transactions') {
+        //     $this->portfolio['transactions'] = msort(array: $this->portfolio['transactions'], key: 'latest_value_date', preserveKey: true, order: SORT_DESC);
 
-        if ($this->timeline['mode'] === 'transactions') {
-            foreach ($portfolio['transactions'] as $transaction) {
-                array_push($datesToProcess, $transaction['date']);
-            }
-        } else {
-            foreach ($startEndDates as $startEndDate) {
-                if ($this->timeline['mode'] === 'monthly') {
-                    if (in_array($startEndDate->month, $data['monthly_months'])) {
-                        if ($startEndDate->day == $data['monthly_day']) {
-                            array_push($datesToProcess, $startEndDate->toDateString());
-                        }
-                    }
-                } else if ($this->timeline['mode'] === 'weekly') {
-                    if (in_array($startEndDate->dayOfWeek(), $data['weekly_days'])) {
-                        array_push($datesToProcess, $startEndDate->toDateString());
-                    }
-                }
-            }
-        }
-        array_push($datesToProcess, $endDate);
+        //     $recalculateFrom = \Carbon\Carbon::parse($recalculateFrom);
 
-        $this->registerProgressMethods($portfolio, $datesToProcess, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
+        //     foreach ($this->portfolio['transactions'] as $transaction) {
+        //         $recalculateFrom = \Carbon\Carbon::parse($recalculateFrom);
+        //         $transactionDate = \Carbon\Carbon::parse($transaction['date']);
 
+        //         if ($transactionDate->gte($recalculateFrom)) {
+        //             array_push($datesToProcess, $transactionDate->toDateString());
+        //         }
+        //     }
+        // } else {
+            $startEndDates = (\Carbon\CarbonPeriod::between($recalculateFrom, $endDate))->toArray();
 
-            // $numberOfSnapshots = count($this->timeline['snapshots']);
-            // $numberOfPerformanceChunks = count($this->timeline['performance_chunks']);
+        //     foreach ($startEndDates as $startEndDate) {
+        //         if ($this->timeline['mode'] === 'monthly') {
+        //             if (in_array($startEndDate->month, $data['monthly_months'])) {
+        //                 if ($startEndDate->day == $data['monthly_day']) {
+        //                     array_push($datesToProcess, $startEndDate->toDateString());
+        //                 }
+        //             }
+        //         } else if ($this->timeline['mode'] === 'weekly') {
+        //             if (in_array($startEndDate->dayOfWeek(), $data['weekly_days'])) {
+        //                 array_push($datesToProcess, $startEndDate->toDateString());
+        //             }
+        //         }
+        //     }
+        // }
+        // array_push($datesToProcess, $endDate);
 
+        // $this->registerProgressMethods($datesToProcess, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
 
-            // $numberOfDays = count($startEndDates);
+        // $numberOfSnapshots = count($this->timeline['snapshots']);
+        // $numberOfPerformanceChunks = count($this->timeline['performance_chunks']);
 
-            // if ($numberOfSnapshots != $numberOfDays ||
-            //     $numberOfPerformanceChunks != $numberOfDays ||
-            //     ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date'])
-            // ) {
-            //     $this->registerProgressMethods($portfolio, $startEndDates, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
+        // $numberOfDays = count($startEndDates);
 
-            //     return true;
-            // }
+        // if ($numberOfSnapshots != $numberOfDays ||
+        //     $numberOfPerformanceChunks != $numberOfDays ||
+        //     ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date'])
+        // ) {
+            $this->registerProgressMethods($startEndDates, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
+
+        //     return true;
+        // }
         $progressFile = $this->basepackages->progress->checkProgressFile('mfportfoliotimeline');
 
         if (!$progressFile) {
@@ -635,9 +540,9 @@ class MfPortfoliostimeline extends BasePackage
             return false;
         }
 
-        //Increase Exectimeout to 10 mins as this process takes time to extract and merge data.
-        if ((int) ini_get('max_execution_time') < 600) {
-            set_time_limit(600);
+        //Increase Exectimeout to 1 hr as this process takes time to extract and merge data.
+        if ((int) ini_get('max_execution_time') < 3600) {
+            set_time_limit(3600);
         }
 
         //Increase memory_limit to 1G as the process takes a bit of memory to process the array.
@@ -646,6 +551,8 @@ class MfPortfoliostimeline extends BasePackage
         }
 
         foreach ($progressFile['allProcesses'] as $process) {
+            $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
+
             if ($this->withProgress($process['method'], $process['args']) === false) {
                 $this->addResponse(
                     $this->portfolioPackage->packagesData->responseMessage,
@@ -656,32 +563,140 @@ class MfPortfoliostimeline extends BasePackage
                 return false;
             }
         }
-
-
-        $this->timeline['snapshots_ids'] = msort(array: $this->timeline['snapshots_ids'], key: 'timelineDate', preserveKey: true);
-        $this->timeline['performance_chunks_ids'] = msort(array: $this->timeline['performance_chunks_ids'], key: 'timelineDate', preserveKey: true);
+        // trace(['me']);
+        // $this->timeline['snapshots_ids'] = msort(array: $this->timeline['snapshots_ids'], key: 'timelineDate', preserveKey: true);
+        // $this->timeline['performance_chunks_ids'] = msort(array: $this->timeline['performance_chunks_ids'], key: 'timelineDate', preserveKey: true);
         $this->timeline['recalculate'] = null;
         $this->timeline['recalculate_from_date'] = null;
 
         //Process Snapshots
-        $this->switchModel($this->snapshotsModel);
+        // $this->switchModel($this->snapshotsModel);
         // $this->setModelToUse($this->snapshotsModel);
 
         // if ($this->config->databasetype !== 'db') {
         //     $this->ffStore = null;
         // }
 
-        foreach ($this->timeline['snapshots'] as $snapshotDate => $snapshot) {
-            if (isset($this->timeline['snapshots_ids'][$snapshotDate])) {
-                $timelineSnapshot = $this->getById((int) $this->timeline['snapshots_ids'][$snapshotDate]);
+        // foreach ($this->timeline['snapshots'] as $snapshotDate => $snapshot) {
+        //     if (isset($this->timeline['snapshots_ids'][$snapshotDate])) {
+        //         $timelineSnapshot = $this->getById((int) $this->timeline['snapshots_ids'][$snapshotDate]);
 
-                if (!$timelineSnapshot) {
-                    $timelineSnapshot = [];
+        //         if (!$timelineSnapshot) {
+        //             $timelineSnapshot = [];
+        //         }
+        //     }
+
+        //     $timelineSnapshot['timeline_id'] = $this->timeline['id'];
+        //     $timelineSnapshot['date'] = $snapshotDate;
+        //     $timelineSnapshot['snapshot'] = $snapshot;
+
+        //     if (isset($timelineSnapshot['id'])) {
+        //         $this->update($timelineSnapshot);
+        //     } else {
+        //         $this->add($timelineSnapshot);
+        //     }
+
+        //     if (!isset($this->packagesData->last['id'])) {
+        //         $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
+
+        //         return false;
+        //     }
+
+        //     $this->timeline['snapshots_ids'][$snapshotDate] = $this->packagesData->last['id'];
+        // }
+
+        //Process Chunks
+        // $this->switchModel($this->performanceChunksModel);
+        // $this->setModelToUse($this->performanceChunksModel);
+
+        // if ($this->config->databasetype !== 'db') {
+        //     $this->ffStore = null;
+        // }
+
+        // foreach ($this->timeline['performance_chunks'] as $performanceChunkDate => $performanceChunk) {
+        //     if (isset($this->timeline['performance_chunks_ids'][$performanceChunkDate])) {
+        //         $timelinePerformanceChunk = $this->getById((int) $this->timeline['performance_chunks_ids'][$performanceChunkDate]);
+
+        //         if (!$timelinePerformanceChunk) {
+        //             $timelinePerformanceChunk = [];
+        //         }
+        //     }
+
+        //     $timelinePerformanceChunk['timeline_id'] = $this->timeline['id'];
+        //     $timelinePerformanceChunk['date'] = $performanceChunkDate;
+        //     $timelinePerformanceChunk['performance_chunk'] = $performanceChunk;
+
+        //     if (isset($timelinePerformanceChunk['id'])) {
+        //         $this->update($timelinePerformanceChunk);
+        //     } else {
+        //         $this->add($timelinePerformanceChunk);
+        //     }
+
+        //     if (!isset($this->packagesData->last['id'])) {
+        //         $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
+
+        //         return false;
+        //     }
+
+        //     $this->timeline['performance_chunks_ids'][$performanceChunkDate] = $this->packagesData->last['id'];
+        // }
+
+        //Update Timeline
+        $this->switchModel();
+        // $this->setModelToUse($this->modelToUse = AppsFintechMfPortfoliostimeline::class);
+
+        // $this->packageName = 'mfportfoliostimeline';
+
+        if ($this->config->databasetype !== 'db') {
+            $this->ffStore = null;
+        }
+
+        if ($this->update($this->timeline)) {
+            //Reset to opcache
+            // if ($this->opCache) {
+            //     $this->opCache->resetCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
+            // }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function generatePortfolioTimeline($args)
+    {
+        $dateToProcess = $args[0];
+        $forceRecalculateTimeline = $args[1];
+
+        $this->timelineDateBeingProcessed = $dateToProcess;
+
+        if (!isset($this->timeline['snapshots'][$dateToProcess]) ||
+            !isset($this->timeline['performance_chunks'][$dateToProcess]) ||
+            $forceRecalculateTimeline
+        ) {
+            $this->switchModel($this->snapshotsModel);
+
+            $this->basepackages->utils->setMicroTimer('Snapshot Start - ' . $dateToProcess, true);
+            $snapshot = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $this->portfolio['id']], false, $dateToProcess);
+            $this->basepackages->utils->setMicroTimer('Snapshot End - ' . $dateToProcess, true);
+            // var_Dump($this->basepackages->utils->getMicroTimer());
+            $this->basepackages->utils->resetMicroTimer();
+
+            if (isset($this->timeline['snapshots_ids'][$dateToProcess])) {
+                $timelineSnapshot = [];
+                $timelineSnapshotArr = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
+
+                if ($timelineSnapshotArr) {
+                    if ($forceRecalculateTimeline) {
+                        $timelineSnapshot['id'] = $timelineSnapshotArr['id'];//Remove everything else.
+                    } else {
+                        $timelineSnapshot = $timelineSnapshotArr;
+                    }
                 }
             }
 
             $timelineSnapshot['timeline_id'] = $this->timeline['id'];
-            $timelineSnapshot['date'] = $snapshotDate;
+            $timelineSnapshot['date'] = $dateToProcess;
             $timelineSnapshot['snapshot'] = $snapshot;
 
             if (isset($timelineSnapshot['id'])) {
@@ -696,30 +711,91 @@ class MfPortfoliostimeline extends BasePackage
                 return false;
             }
 
-            $this->timeline['snapshots_ids'][$snapshotDate] = $this->packagesData->last['id'];
+            $this->timeline['snapshots_ids'][$dateToProcess] = $this->packagesData->last['id'];
+
+
+            if (!$this->createSnapshotChunks($timelineSnapshot, $forceRecalculateTimeline)) {
+                return false;
+            }
         }
 
-        //Process Chunks
-        $this->switchModel($this->performanceChunksModel);
-        // $this->setModelToUse($this->performanceChunksModel);
+        return true;
+    }
 
-        // if ($this->config->databasetype !== 'db') {
-        //     $this->ffStore = null;
+    protected function createSnapshotChunks($timelineSnapshot, $forceRecalculateTimeline = false)
+    {
+        // trace([$timelineSnapshot]);
+        // if (isset($this->timeline['snapshots'])) {
+        //     $timelineSnapshots = $this->timeline['snapshots'];
+        // } else if (isset($this->timeline['snapshots_ids'])) {
         // }
+        $snapshotsIds = $this->timeline['snapshots_ids'];
+        ksort($snapshotsIds);
+        $timelineDateKeys = array_keys($snapshotsIds);
+        // // $timelineDateKeys = array_keys($this->timeline['snapshots']);
+        $timelineDateKey = array_search($timelineSnapshot['date'], $timelineDateKeys);
 
-        foreach ($this->timeline['performance_chunks'] as $performanceChunkDate => $performanceChunk) {
-            if (isset($this->timeline['performance_chunks_ids'][$performanceChunkDate])) {
-                $timelinePerformanceChunk = $this->getById((int) $this->timeline['performance_chunks_ids'][$performanceChunkDate]);
+        // $portfolioSnapshots = array_slice($snapshotsIds, 0, $timelineDateKey + 1);
+        // trace([$portfolioSnapshots]);
 
-                if (!$timelinePerformanceChunk) {
-                    $timelinePerformanceChunk = [];
-                }
+        // $portfolioSnapshots = msort(array: $portfolioSnapshots, key: 'timelineDate');
+        // trace([$portfolioSnapshots]);
+        // $totalSnapshots = count($portfolioSnapshots);
+
+        // $this->timeline['performance_chunks'][$timelineDate]['timelineDate'] = $timelineDate;
+        // $this->timeline['performance_chunks'][$timelineDate]['all'] = [];
+
+        // $portfolioSnapshotsArr = [];
+
+        // foreach ($portfolioSnapshots as $snapshotDate => $snapshotId) {
+        //     $this->switchModel($this->snapshotsModel);
+
+        //     if (!isset($portfolioSnapshotsArr[$snapshotDate])) {
+        //         $portfolioSnapshotsArr[$snapshotDate] = $this->getById((int) $snapshotId);
+        //     }
+
+            $this->switchModel($this->performanceChunksModel);
+
+            $previousPerformanceChunk = [];
+
+        if ($timelineDateKey !== 0) {
+            // trace([$timelineDateKeys, $timelineDateKey, $this->timeline['performance_chunks_ids'][$timelineDateKeys[$timelineDateKey - 1]]]);
+            $previousPerformanceChunkArr = $this->getById((int) $this->timeline['performance_chunks_ids'][$timelineDateKeys[$timelineDateKey - 1]]);
+
+            if ($previousPerformanceChunkArr) {
+                $previousPerformanceChunk = $previousPerformanceChunkArr['performance_chunk'];
             }
 
-            $timelinePerformanceChunk['timeline_id'] = $this->timeline['id'];
-            $timelinePerformanceChunk['date'] = $performanceChunkDate;
-            $timelinePerformanceChunk['performance_chunk'] = $performanceChunk;
+            // trace([$previousPerformanceChunk]);
+        }
+        // trace([$this->portfolio['start_date'], $timelineSnapshot['date']]);
+            if (isset($this->timeline['performance_chunks_ids'][$timelineSnapshot['date']])) {
+                $timelinePerformanceChunk = [];
+                $timelinePerformanceChunkArr = $this->getById((int) $this->timeline['performance_chunks_ids'][$timelineSnapshot['date']]);
 
+                if ($timelinePerformanceChunkArr) {
+                    if ($forceRecalculateTimeline) {
+                        $timelinePerformanceChunk['id'] = $timelinePerformanceChunkArr['id'];//Remove everything else.
+                    } else {
+                        $timelinePerformanceChunk = $timelinePerformanceChunkArr;
+                    }
+                }
+            }
+            // $timelinePerformanceChunk[$timelineSnapshot['date']]['timelineDate'] = $timelineDate;
+
+            // $this->timeline['performance_chunks'][$timelineDate]['all'][$portfolioSnapshotsArr[$timelineSnapshot['date']]['timelineDate']] = [];
+            // $allPerfornace = &$this->timeline['performance_chunks'][$timelineDate]['all'][$portfolioSnapshotsArr[$timelineSnapshot['date']]['timelineDate']];
+            $timelinePerformanceChunk['date'] = $timelineSnapshot['date'];
+            $timelinePerformanceChunk['timeline_id'] = $timelineSnapshot['timeline_id'];
+            // $timelinePerformanceChunk['performance_chunk']['timelineDate'] = $timelineSnapshot['date'];
+            $thisPerformanceChunk = [];
+            $thisPerformanceChunk[$timelineSnapshot['date']]['invested_amount'] = $timelineSnapshot['snapshot']['invested_amount'];
+            $thisPerformanceChunk[$timelineSnapshot['date']]['return_amount'] = $timelineSnapshot['snapshot']['return_amount'];
+            $thisPerformanceChunk[$timelineSnapshot['date']]['profit_loss'] = $timelineSnapshot['snapshot']['profit_loss'];
+
+            $timelinePerformanceChunk['performance_chunk'] = array_merge($previousPerformanceChunk, $thisPerformanceChunk);
+
+            // trace([$timelinePerformanceChunk]);
             if (isset($timelinePerformanceChunk['id'])) {
                 $this->update($timelinePerformanceChunk);
             } else {
@@ -727,52 +803,137 @@ class MfPortfoliostimeline extends BasePackage
             }
 
             if (!isset($this->packagesData->last['id'])) {
-                $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
+                $this->addResponse('Could not insert/update timeline performance chunk, contact developer', 1);
 
                 return false;
             }
 
-            $this->timeline['performance_chunks_ids'][$performanceChunkDate] = $this->packagesData->last['id'];
-        }
-
-        //Update Timeline
-        $this->switchModel();
-        // $this->setModelToUse($this->modelToUse = AppsFintechMfPortfoliostimeline::class);
-
-        // $this->packageName = 'mfportfoliostimeline';
-
-        if ($this->config->databasetype !== 'db') {
-            $this->ffStore = null;
-        }
-
-        if ($this->update($this->timeline)) {
-            //Reset to opcache
-            if ($this->opCache) {
-                $this->opCache->resetCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
-            }
+            $this->timeline['performance_chunks_ids'][$timelineSnapshot['date']] = $this->packagesData->last['id'];
 
             return true;
-        }
+            // trace([$timelinePerformanceChunk]);
+        // trace([$portfolioSnapshotsArr]);
+        // }
+        // for ($forAll = 0; $forAll < $totalSnapshots; $forAll++) {
+        // }
 
-        return false;
-    }
+        // if ($totalSnapshots > 1) {
+        //     if ($totalSnapshots > 7) {
+        //         $forWeek = $totalSnapshots - 7;
+        //     } else {
+        //         $forWeek = $totalSnapshots;
+        //     }
 
-    protected function generatePortfolioTimeline($args)
-    {
-        $portfolioId = $args[0];
-        $dateToProcess = $args[1];
-        $forceRecalculateTimeline = $args[2];
+        //     $this->timeline['performance_chunks'][$timelineDate]['week'] = [];
+        //     for ($forWeek; $forWeek < $totalSnapshots; $forWeek++) {
+        //         $this->timeline['performance_chunks'][$timelineDate]['week'][$portfolioSnapshots[$forWeek]['timelineDate']] = [];
+        //         $weeklyPerformance = &$this->timeline['performance_chunks'][$timelineDate]['week'][$portfolioSnapshots[$forWeek]['timelineDate']];
+        //         $weeklyPerformance['timelineDate'] = $portfolioSnapshots[$forWeek]['timelineDate'];
+        //         $weeklyPerformance['invested_amount'] = $portfolioSnapshots[$forWeek]['invested_amount'];
+        //         $weeklyPerformance['return_amount'] = $portfolioSnapshots[$forWeek]['return_amount'];
+        //         $weeklyPerformance['profit_loss'] = $portfolioSnapshots[$forWeek]['profit_loss'];
+        //     }
+        // }
 
-        if (!isset($this->timeline['snapshots'][$dateToProcess]) ||
-            !isset($this->timeline['performance_chunks'][$dateToProcess]) ||
-            $forceRecalculateTimeline
-        ) {
-            $this->timeline['snapshots'][$dateToProcess] = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $portfolioId], false, $dateToProcess);
+        // if ($totalSnapshots > 7) {
+        //     if ($totalSnapshots > 30) {
+        //         $forMonth = $totalSnapshots - 30;
+        //     } else {
+        //         $forMonth = $totalSnapshots;
+        //     }
 
-            $this->createChunks($dateToProcess);
-        }
+        //     $this->timeline['performance_chunks'][$timelineDate]['month'] = [];
+        //     for ($forMonth; $forMonth < $totalSnapshots; $forMonth++) {
+        //         $this->timeline['performance_chunks'][$timelineDate]['month'][$portfolioSnapshots[$forMonth]['timelineDate']] = [];
+        //         $monthlyPerformance = &$this->timeline['performance_chunks'][$timelineDate]['month'][$portfolioSnapshots[$forMonth]['timelineDate']];
+        //         $monthlyPerformance['timelineDate'] = $portfolioSnapshots[$forMonth]['timelineDate'];
+        //         $monthlyPerformance['invested_amount'] = $portfolioSnapshots[$forMonth]['invested_amount'];
+        //         $monthlyPerformance['return_amount'] = $portfolioSnapshots[$forMonth]['return_amount'];
+        //         $monthlyPerformance['profit_loss'] = $portfolioSnapshots[$forMonth]['profit_loss'];
+        //     }
+        // }
 
-        return true;
+        // if ($totalSnapshots > 30) {
+        //     if ($totalSnapshots > 365) {
+        //         $forYear = $totalSnapshots - 365;
+        //     } else {
+        //         $forYear = $totalSnapshots;
+        //     }
+
+        //     $this->timeline['performance_chunks'][$timelineDate]['year'] = [];
+        //     for ($forYear; $forYear < $totalSnapshots; $forYear++) {
+        //         $this->timeline['performance_chunks'][$timelineDate]['year'][$portfolioSnapshots[$forYear]['timelineDate']] = [];
+        //         $yearlyPerformance = &$this->timeline['performance_chunks'][$timelineDate]['year'][$portfolioSnapshots[$forYear]['timelineDate']];
+        //         $yearlyPerformance['timelineDate'] = $portfolioSnapshots[$forYear]['timelineDate'];
+        //         $yearlyPerformance['invested_amount'] = $portfolioSnapshots[$forYear]['invested_amount'];
+        //         $yearlyPerformance['return_amount'] = $portfolioSnapshots[$forYear]['return_amount'];
+        //         $yearlyPerformance['profit_loss'] = $portfolioSnapshots[$forYear]['profit_loss'];
+        //     }
+        // }
+
+        // if ($totalSnapshots > 365) {
+        //     if ($totalSnapshots > 1095) {
+        //         $forThreeYear = $totalSnapshots - 1095;
+        //     } else {
+        //         $forThreeYear = $totalSnapshots;
+        //     }
+
+        //     $this->timeline['performance_chunks'][$timelineDate]['threeYear'] = [];
+        //     for ($forThreeYear; $forThreeYear < $totalSnapshots; $forThreeYear++) {
+        //         $this->timeline['performance_chunks'][$timelineDate]['threeYear'][$portfolioSnapshots[$forThreeYear]['timelineDate']] = [];
+        //         $threeYearPerformance = &$this->timeline['performance_chunks'][$timelineDate]['threeYear'][$portfolioSnapshots[$forThreeYear]['timelineDate']];
+        //         $threeYearPerformance['timelineDate'] = $portfolioSnapshots[$forThreeYear]['timelineDate'];
+        //         $threeYearPerformance['invested_amount'] = $portfolioSnapshots[$forThreeYear]['invested_amount'];
+        //         $threeYearPerformance['return_amount'] = $portfolioSnapshots[$forThreeYear]['return_amount'];
+        //         $threeYearPerformance['profit_loss'] = $portfolioSnapshots[$forThreeYear]['profit_loss'];
+        //     }
+        // }
+
+        // if ($totalSnapshots > 1095) {
+        //     if ($totalSnapshots > 1825) {
+        //         $forFiveYear = $totalSnapshots - 1825;
+        //     } else {
+        //         $forFiveYear = $totalSnapshots;
+        //     }
+
+        //     $this->timeline['performance_chunks'][$timelineDate]['fiveYear'] = [];
+        //     for ($forFiveYear; $forFiveYear < $totalSnapshots; $forFiveYear++) {
+        //         $this->timeline['performance_chunks'][$timelineDate]['fiveYear'][$portfolioSnapshots[$forFiveYear]['timelineDate']] = [];
+        //         $fiveYearPerformance = &$this->timeline['performance_chunks'][$timelineDate]['fiveYear'][$portfolioSnapshots[$forFiveYear]['timelineDate']];
+        //         $fiveYearPerformance['timelineDate'] = $portfolioSnapshots[$forFiveYear]['timelineDate'];
+        //         $fiveYearPerformance['invested_amount'] = $portfolioSnapshots[$forFiveYear]['invested_amount'];
+        //         $fiveYearPerformance['return_amount'] = $portfolioSnapshots[$forFiveYear]['return_amount'];
+        //         $fiveYearPerformance['profit_loss'] = $portfolioSnapshots[$forFiveYear]['profit_loss'];
+        //     }
+        // }
+
+        // if ($totalSnapshots > 3652) {
+        //     if ($totalSnapshots > 3652) {
+        //         $forTenYear = $totalSnapshots - 3652;
+        //     } else {
+        //         $forTenYear = $totalSnapshots;
+        //     }
+
+        //     $this->timeline['performance_chunks'][$timelineDate]['tenYear'] = [];
+        //     for ($forTenYear; $forTenYear < $totalSnapshots; $forTenYear++) {
+        //         $this->timeline['performance_chunks'][$timelineDate]['tenYear'][$portfolioSnapshots[$forTenYear]['timelineDate']] = [];
+        //         $tenYearPerformance = &$this->timeline['performance_chunks'][$timelineDate]['tenYear'][$portfolioSnapshots[$forTenYear]['timelineDate']];
+        //         $tenYearPerformance['timelineDate'] = $portfolioSnapshots[$forTenYear]['timelineDate'];
+        //         $tenYearPerformance['invested_amount'] = $portfolioSnapshots[$forTenYear]['invested_amount'];
+        //         $tenYearPerformance['return_amount'] = $portfolioSnapshots[$forTenYear]['return_amount'];
+        //         $tenYearPerformance['profit_loss'] = $portfolioSnapshots[$forTenYear]['profit_loss'];
+        //     }
+        // }
+
+        // $this->timeline['performance_chunks'][$timelineDate]['all'] = [];
+        // for ($forAll = 0; $forAll < $totalSnapshots; $forAll++) {
+        //     $this->timeline['performance_chunks'][$timelineDate]['all'][$portfolioSnapshots[$forAll]['timelineDate']] = [];
+        //     $allPerfornace = &$this->timeline['performance_chunks'][$timelineDate]['all'][$portfolioSnapshots[$forAll]['timelineDate']];
+        //     $allPerfornace['timelineDate'] = $portfolioSnapshots[$forAll]['timelineDate'];
+        //     $allPerfornace['invested_amount'] = $portfolioSnapshots[$forAll]['invested_amount'];
+        //     $allPerfornace['return_amount'] = $portfolioSnapshots[$forAll]['return_amount'];
+        //     $allPerfornace['profit_loss'] = $portfolioSnapshots[$forAll]['profit_loss'];
+        // }
     }
 
     protected function switchModel($model = null)
