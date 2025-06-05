@@ -13,9 +13,9 @@ class MfPortfoliostimeline extends BasePackage
 {
     protected $modelToUse = AppsFintechMfPortfoliostimeline::class;
 
-    protected $snapshotsModel = AppsFintechMfPortfoliostimelineSnapshots::class;
+    public $snapshotsModel = AppsFintechMfPortfoliostimelineSnapshots::class;
 
-    protected $performanceChunksModel = AppsFintechMfPortfoliostimelinePerformanceChunks::class;
+    public $performanceChunksModel = AppsFintechMfPortfoliostimelinePerformanceChunks::class;
 
     protected $packageName = 'mfportfoliostimeline';
 
@@ -34,6 +34,8 @@ class MfPortfoliostimeline extends BasePackage
     protected $portfolioTransactionsDates = [];
 
     public $portfolioSchemes = [];
+
+    private $previousSnapshot;
 
     public function getTimeline()
     {
@@ -62,6 +64,9 @@ class MfPortfoliostimeline extends BasePackage
 
         $this->timeline['recalculate'] = true;
         $this->timeline['recalculate_from_date'] = $transactionDate;
+
+        //Delete snapshots and chunks here
+        //
 
         $this->update($this->timeline);
     }
@@ -205,11 +210,43 @@ class MfPortfoliostimeline extends BasePackage
             if ($timelineSnapshot) {
                 $timelinePortfolio = $timelineSnapshot['snapshot'];
             }
-        } else {
+        }
+
+        if (!isset($timelinePortfolio)) {
             //We need to recalculate here as well if we change any transactions.
             $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
 
-            $timelinePortfolio = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $portfolio['id']], false, $getTimelineDate);
+            $this->timelineDateBeingProcessed = $getTimelineDate;
+
+            $timelinePortfolio = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $portfolio['id']], false, $this);
+
+            $timelinePortfolio['timelineDate'] = $getTimelineDate;
+
+            $this->switchModel($this->snapshotsModel);
+
+            $timelineSnapshot = [];
+
+            $timelineSnapshot['timeline_id'] = $this->timeline['id'];
+            $timelineSnapshot['date'] = $getTimelineDate;
+            $timelineSnapshot['snapshot'] = $timelinePortfolio;
+
+            if (isset($timelineSnapshot['id'])) {
+                $this->update($timelineSnapshot);
+            } else {
+                $this->add($timelineSnapshot);
+            }
+
+            if (!isset($this->packagesData->last['id'])) {
+                $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
+
+                return false;
+            }
+
+            $this->timeline['snapshots_ids'][$getTimelineDate] = $this->packagesData->last['id'];
+
+            if (!$this->createSnapshotChunks($timelineSnapshot, $force)) {
+                return false;
+            }
         }
 
         if (isset($this->portfolioPackage)) {
@@ -250,6 +287,10 @@ class MfPortfoliostimeline extends BasePackage
                 $this->addResponse('Recalculated timeline for ' . $getTimelineDate, 0);
             }
 
+            //Update with ids
+            $this->switchModel();
+            $this->update($this->timeline);
+
             return $timelinePortfolio;
         }
 
@@ -258,6 +299,7 @@ class MfPortfoliostimeline extends BasePackage
 
     public function timelineNeedsGeneration($portfolio)
     {
+        return false;
         $this->getPortfoliotimelineByPortfolio($portfolio, false);
 
         if (!isset($this->timeline['snapshots_ids']) || !isset($this->timeline['performance_chunks_ids'])) {
@@ -290,7 +332,7 @@ class MfPortfoliostimeline extends BasePackage
                 'day' =>
                 [
                     'id'    => 'day',
-                    'name'  => 'Day'
+                    'name'  => 'DAY'
                 ],
                 'week' =>
                 [
@@ -460,7 +502,7 @@ class MfPortfoliostimeline extends BasePackage
                     return false;
                 }
 
-                $this->portfolioSchemes[$portfolioTransaction['amfi_code']] = $scheme['navs']['navs'];
+                $this->portfolioSchemes[$portfolioTransaction['amfi_code']] = $scheme;
             }
 
         }
@@ -674,25 +716,43 @@ class MfPortfoliostimeline extends BasePackage
             !isset($this->timeline['performance_chunks'][$dateToProcess]) ||
             $forceRecalculateTimeline
         ) {
-            $this->switchModel($this->snapshotsModel);
-
             $this->basepackages->utils->setMicroTimer('Snapshot Start - ' . $dateToProcess, true);
-            $snapshot = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $this->portfolio['id']], false, $dateToProcess);
+
+            $snapshot = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $this->portfolio['id']], false, $this);
+            // if (in_array($dateToProcess, $this->portfolioTransactionsDates)) {
+            //     $this->previousSnapshot = $snapshot = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $this->portfolio['id']], false, $this);
+            //     //remove this
+            //     return true;
+            // } else {
+            //     if ($this->previousSnapshot) {
+            //         $snapshot = $this->calculatePreviousSnapshot();
+            //     }
+            // }
+
+            if (!isset($snapshot) || !$snapshot) {
+                $this->addResponse('Error generating snapshot for timeline date - ' . $dateToProcess, 1);
+
+                return false;
+            }
+
             $this->basepackages->utils->setMicroTimer('Snapshot End - ' . $dateToProcess, true);
             // var_Dump($this->basepackages->utils->getMicroTimer());
             $this->basepackages->utils->resetMicroTimer();
 
-            if (isset($this->timeline['snapshots_ids'][$dateToProcess])) {
-                $timelineSnapshot = [];
-                $timelineSnapshotArr = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
+            $this->switchModel($this->snapshotsModel);
 
-                if ($timelineSnapshotArr) {
-                    if ($forceRecalculateTimeline) {
-                        $timelineSnapshot['id'] = $timelineSnapshotArr['id'];//Remove everything else.
-                    } else {
-                        $timelineSnapshot = $timelineSnapshotArr;
-                    }
-                }
+            $timelineSnapshot = [];
+            if (isset($this->timeline['snapshots_ids'][$dateToProcess])) {
+                // $timelineSnapshotArr = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
+                $timelineSnapshot = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
+
+                // if ($timelineSnapshotArr) {
+                //     if ($forceRecalculateTimeline) {
+                //         $timelineSnapshot['id'] = $timelineSnapshotArr['id'];//Remove everything else.
+                //     } else {
+                //         $timelineSnapshot = $timelineSnapshotArr;
+                //     }
+                // }
             }
 
             $timelineSnapshot['timeline_id'] = $this->timeline['id'];
@@ -712,7 +772,6 @@ class MfPortfoliostimeline extends BasePackage
             }
 
             $this->timeline['snapshots_ids'][$dateToProcess] = $this->packagesData->last['id'];
-
 
             if (!$this->createSnapshotChunks($timelineSnapshot, $forceRecalculateTimeline)) {
                 return false;
@@ -936,7 +995,7 @@ class MfPortfoliostimeline extends BasePackage
         // }
     }
 
-    protected function switchModel($model = null)
+    public function switchModel($model = null)
     {
         if (!$model) {
             $this->setModelToUse($this->modelToUse = AppsFintechMfPortfoliostimeline::class);
