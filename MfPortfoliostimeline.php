@@ -493,7 +493,7 @@ class MfPortfoliostimeline extends BasePackage
         foreach ($this->portfolio['transactions'] as $portfolioTransaction) {
             array_push($this->portfolioTransactionsDates, $portfolioTransaction['date']);
 
-            if (!isset($this->portfolioSchemes[$portfolioTransaction['amfi_code']])) {
+            if (!isset($this->portfolioSchemes[$portfolioTransaction['scheme_id']])) {
                 $scheme = $this->schemePackage->getSchemeFromAmfiCodeOrSchemeId($portfolioTransaction);
 
                 if (!$scheme || !isset($scheme['navs']['navs'])) {
@@ -502,7 +502,7 @@ class MfPortfoliostimeline extends BasePackage
                     return false;
                 }
 
-                $this->portfolioSchemes[$portfolioTransaction['amfi_code']] = $scheme;
+                $this->portfolioSchemes[$portfolioTransaction['scheme_id']] = $scheme;
             }
 
         }
