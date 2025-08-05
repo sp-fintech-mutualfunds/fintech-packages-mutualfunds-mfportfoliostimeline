@@ -7,6 +7,10 @@ use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostim
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimelinePerformanceChunks;
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\Model\AppsFintechMfPortfoliostimelineSnapshots;
 use Apps\Fintech\Packages\Mf\Schemes\MfSchemes;
+use League\Flysystem\FilesystemException;
+use League\Flysystem\UnableToCheckExistence;
+use League\Flysystem\UnableToReadFile;
+use League\Flysystem\UnableToWriteFile;
 use System\Base\BasePackage;
 
 class MfPortfoliostimeline extends BasePackage
@@ -29,11 +33,13 @@ class MfPortfoliostimeline extends BasePackage
 
     public $timelineDateBeingProcessed;
 
-    protected $portfolio;
+    public $portfolio;
 
     protected $portfolioTransactionsDates = [];
 
     public $portfolioSchemes = [];
+
+    public $parsedCarbon = [];
 
     private $previousSnapshot;
 
@@ -44,7 +50,11 @@ class MfPortfoliostimeline extends BasePackage
 
     public function init()
     {
-        $this->today = (\Carbon\Carbon::now(new \DateTimeZone('Asia/Kolkata')))->toDateString();
+        $this->today = (\Carbon\Carbon::now(new \DateTimeZone('Asia/Kolkata')));
+
+        $this->parsedCarbon[$this->today->toDateString()] = $this->today;
+
+        $this->today = $this->today->toDateString();
 
         parent::init();
 
@@ -75,9 +85,9 @@ class MfPortfoliostimeline extends BasePackage
     {
         $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
 
-        $portfolio = $this->portfolioPackage->getById($portfolio['id']);
+        $this->portfolio = $this->portfolioPackage->getById($portfolio['id']);
 
-        if (!$portfolio) {
+        if (!$this->portfolio) {
             $this->addResponse('Timeline for Portfolio does not exists. Contact developer as this should not have happened.', 1);
 
             return false;
@@ -135,24 +145,35 @@ class MfPortfoliostimeline extends BasePackage
     public function getPortfoliotimelineByPortfolioAndTimeline($portfolio, $getTimelineDate = null, $force = false)
     {
         //Increase Exectimeout to 10 mins as this process takes time to extract and merge data.
-        if ((int) ini_get('max_execution_time') < 600) {
-            set_time_limit(600);
+        // if ((int) ini_get('max_execution_time') < 600) {
+        //     set_time_limit(600);
+        // }
+
+        // //Increase memory_limit to 1G as the process takes a bit of memory to process the array.
+        // if ((int) ini_get('memory_limit') < 1024) {
+        //     ini_set('memory_limit', '1024M');
+        // }
+
+        if (!isset($portfolio['timeline'])) {
+            $this->getPortfoliotimelineByPortfolio($portfolio);
+
+            if (!$this->timeline) {
+                return false;
+            }
         }
 
-        //Increase memory_limit to 1G as the process takes a bit of memory to process the array.
-        if ((int) ini_get('memory_limit') < 1024) {
-            ini_set('memory_limit', '1024M');
-        }
-
-        $this->getPortfoliotimelineByPortfolio($portfolio);
-
-        if (!$this->timeline) {
-            return false;
-        }
+        $this->timeline = &$portfolio['timeline'];
 
         $beforeStartDateRequested = null;
         if ($getTimelineDate) {
-            if ((\Carbon\Carbon::parse($getTimelineDate))->lt(\Carbon\Carbon::parse($portfolio['start_date']))) {
+            if (!isset($this->parsedCarbon[$getTimelineDate])) {
+                $this->parsedCarbon[$getTimelineDate] = \Carbon\Carbon::parse($getTimelineDate);
+            }
+            if (!isset($this->parsedCarbon[$portfolio['start_date']])) {
+                $this->parsedCarbon[$portfolio['start_date']] = \Carbon\Carbon::parse($portfolio['start_date']);
+            }
+
+            if (($this->parsedCarbon[$getTimelineDate])->lt($this->parsedCarbon[$portfolio['start_date']])) {
                 $beforeStartDateRequested = true;
 
                 $getTimelineDate = $portfolio['start_date'];
@@ -161,7 +182,7 @@ class MfPortfoliostimeline extends BasePackage
             $getTimelineDate = $portfolio['start_date'];
         }
 
-        if ((\Carbon\Carbon::parse($getTimelineDate))->gt(\Carbon\Carbon::parse($this->today))) {
+        if (($this->parsedCarbon[$getTimelineDate])->gt($this->parsedCarbon[$this->today])) {
             $getTimelineDate = $this->today;
         }
 
@@ -182,30 +203,49 @@ class MfPortfoliostimeline extends BasePackage
             if ($investmentsClosed) {
                 $portfolio['transactions'] = msort(array: $portfolio['transactions'], key: 'date', preserveKey: true, order: SORT_DESC);
 
-                if ((\Carbon\Carbon::parse($getTimelineDate))->gt(\Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['date']))) {
+                if (!isset($this->parsedCarbon[$this->helper->first($portfolio['transactions'])['date']])) {
+                    $this->parsedCarbon[$this->helper->first($portfolio['transactions'])['date']] = \Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['date']);
+                }
+
+                if (($this->parsedCarbon[$getTimelineDate])->gt($this->parsedCarbon[$this->helper->first($portfolio['transactions'])['date']])) {
                     $afterEndDateRequested = true;
                 }
 
-                if ((\Carbon\Carbon::parse($getTimelineDate))->gte(\Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['date']))) {
+                if (($this->parsedCarbon[$getTimelineDate])->gte($this->parsedCarbon[$this->helper->first($portfolio['transactions'])['date']])) {
                     $endDate = $getTimelineDate = $this->helper->first($portfolio['transactions'])['date'];
                 }
             } else {
                 $portfolio['transactions'] = msort(array: $portfolio['transactions'], key: 'latest_value_date', preserveKey: true, order: SORT_DESC);
 
-                if ((\Carbon\Carbon::parse($getTimelineDate))->gt(\Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['latest_value_date']))) {
+                if (!isset($this->parsedCarbon[$this->helper->first($portfolio['transactions'])['latest_value_date']])) {
+                    $this->parsedCarbon[$this->helper->first($portfolio['transactions'])['latest_value_date']] = \Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['latest_value_date']);
+                }
+
+                if (($this->parsedCarbon[$getTimelineDate])->gt($this->parsedCarbon[$this->helper->first($portfolio['transactions'])['latest_value_date']])) {
                     $afterEndDateRequested = true;
                 }
 
-                if ((\Carbon\Carbon::parse($getTimelineDate))->gte(\Carbon\Carbon::parse($this->helper->first($portfolio['transactions'])['latest_value_date']))) {
+                if (($this->parsedCarbon[$getTimelineDate])->gte($this->parsedCarbon[$this->helper->first($portfolio['transactions'])['latest_value_date']])) {
                     $endDate = $getTimelineDate = $this->helper->first($portfolio['transactions'])['latest_value_date'];
                 }
             }
         }
-
+        // trace([$this->timeline['snapshots_ids'][$getTimelineDate]]);
         if (isset($this->timeline['snapshots_ids'][$getTimelineDate]) && !$force) {
-            $this->switchModel($this->snapshotsModel);
+            try {
+                if ($this->localContent->fileExists('.ff/sp/apps_fintech_mf_portfoliostimeline_snapshots/data/' . $this->timeline['snapshots_ids'][$getTimelineDate] . '.json')) {
+                    $timelineSnapshot = $this->helper->decode($this->localContent->read('.ff/sp/apps_fintech_mf_portfoliostimeline_snapshots/data/' . $this->timeline['snapshots_ids'][$getTimelineDate] . '.json'), true);
+                }
+            } catch (FilesystemException | UnableToReadFile | UnableToCheckExistence | \throwable $e) {
+                $this->addResponse($e->getMessage(), 1);
 
-            $timelineSnapshot = $this->getById((int) $this->timeline['snapshots_ids'][$getTimelineDate]);
+                return false;
+            }
+
+            // trace([$timelineSnapshot]);
+            // $this->switchModel($this->snapshotsModel);
+
+            // $timelineSnapshot = $this->getById((int) $this->timeline['snapshots_ids'][$getTimelineDate]);
 
             if ($timelineSnapshot) {
                 $timelinePortfolio = $timelineSnapshot['snapshot'];
@@ -230,47 +270,70 @@ class MfPortfoliostimeline extends BasePackage
             $timelineSnapshot['date'] = $getTimelineDate;
             $timelineSnapshot['snapshot'] = $timelinePortfolio;
 
-            if (isset($timelineSnapshot['id'])) {
-                $this->update($timelineSnapshot);
-            } else {
-                $this->add($timelineSnapshot);
+            // if (isset($timelineSnapshot['id'])) {
+            //     $this->update($timelineSnapshot);
+            // } else {
+            //     $this->add($timelineSnapshot);
+            // }
+
+            // if (!isset($this->packagesData->last['id'])) {
+            //     $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
+
+            //     return false;
+            // }
+
+            // $this->timeline['snapshots_ids'][$getTimelineDate] = $this->packagesData->last['id'];
+
+            $timelineSnapshot['snapshot']['id'] = $this->getLastInsertedId() + 1;
+            // trace([$timelineSnapshot['snapshot']['id']]);
+            try {
+                $this->localContent->write(
+                    '.ff/sp/apps_fintech_mf_portfoliostimeline_snapshots/data/' . $timelineSnapshot['snapshot']['id'] . '.json',
+                    $this->helper->encode($timelineSnapshot)
+                );
+
+                $this->ffStore->count(true);
+            } catch (FilesystemException | UnableToWriteFile | \throwable $e) {
+                $this->addResponse($e->getMessage(), 1);
+
+                return false;
             }
 
-            if (!isset($this->packagesData->last['id'])) {
+            if ($this->getLastInsertedId() !== $timelineSnapshot['snapshot']['id']) {
                 $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
 
                 return false;
             }
 
-            $this->timeline['snapshots_ids'][$getTimelineDate] = $this->packagesData->last['id'];
+            $this->timeline['snapshots_ids'][$getTimelineDate] = $timelineSnapshot['snapshot']['id'];
 
-            if (!$this->createSnapshotChunks($timelineSnapshot, $force)) {
-                return false;
-            }
+            // if (!$this->createSnapshotChunks($timelineSnapshot, $force)) {
+            //     return false;
+            // }
         }
 
-        if (isset($this->portfolioPackage)) {
-            $this->addResponse(
-                $this->portfolioPackage->packagesData->responseMessage,
-                $this->portfolioPackage->packagesData->responseCode,
-                $this->portfolioPackage->packagesData->responseData ?? []
-            );
-        }
+        // if (isset($this->portfolioPackage)) {
+        //     $this->addResponse(
+        //         $this->portfolioPackage->packagesData->responseMessage,
+        //         $this->portfolioPackage->packagesData->responseCode,
+        //         $this->portfolioPackage->packagesData->responseData ?? []
+        //     );
+        // }
 
         if ($timelinePortfolio) {
             $timelinePortfolio['beforeStartDateRequested'] = $beforeStartDateRequested;
             $timelinePortfolio['afterEndDateRequested'] = $afterEndDateRequested;
             $timelinePortfolio['end_date'] = $endDate;
 
-            if (isset($this->timeline['performance_chunks_ids'][$getTimelineDate]) && !$force) {
-                $this->switchModel($this->performanceChunksModel);
+            // if (isset($this->timeline['performance_chunks_ids'][$getTimelineDate]) && !$force) {
+            //     $this->switchModel($this->performanceChunksModel);
 
-                $timelinePerformanceChunk = $this->getById((int) $this->timeline['performance_chunks_ids'][$getTimelineDate]);
+            //     $timelinePerformanceChunk = $this->getById((int) $this->timeline['performance_chunks_ids'][$getTimelineDate]);
 
-                if ($timelinePerformanceChunk) {
-                    $timelinePortfolio['performance_chunks'] = $timelinePerformanceChunk['performance_chunk'];
-                }
-            } else {
+            //     if ($timelinePerformanceChunk) {
+            //         $timelinePortfolio['performance_chunks'] = $timelinePerformanceChunk['performance_chunk'];
+            //     }
+            // } else {
                 // trace(['me']);
                 // $this->createSnapshotChunks($getTimelineDate);
                 // $this->update($this->timeline);
@@ -279,7 +342,7 @@ class MfPortfoliostimeline extends BasePackage
                 // if ($this->opCache) {
                 //     $this->opCache->setCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
                 // }
-            }
+            // }
 
             // $timelinePortfolio['performance_chunks'] = $this->timeline['performance_chunks'][$getTimelineDate];
 
@@ -289,7 +352,17 @@ class MfPortfoliostimeline extends BasePackage
 
             //Update with ids
             $this->switchModel();
-            $this->update($this->timeline);
+            // $this->update($this->timeline);
+            try {
+                $this->localContent->write(
+                    '.ff/sp/apps_fintech_mf_portfoliostimeline/data/' . $this->timeline['id'] . '.json',
+                    $this->helper->encode($this->timeline)
+                );
+            } catch (FilesystemException | UnableToWriteFile | \throwable $e) {
+                $this->addResponse($e->getMessage(), 1);
+
+                return false;
+            }
 
             return $timelinePortfolio;
         }
@@ -299,28 +372,37 @@ class MfPortfoliostimeline extends BasePackage
 
     public function timelineNeedsGeneration($portfolio)
     {
-        return false;
-        $this->getPortfoliotimelineByPortfolio($portfolio, false);
+        $this->portfolio = $portfolio;
 
-        if (!isset($this->timeline['snapshots_ids']) || !isset($this->timeline['performance_chunks_ids'])) {
-            return true;
+        if (!isset($portfolio['timeline'])) {
+            $this->getPortfoliotimelineByPortfolio($portfolio);
+
+            if (!$this->timeline) {
+                return false;
+            }
         }
 
-        if (count($this->timeline['snapshots_ids']) === 0 || count($this->timeline['performance_chunks_ids']) === 0) {
-            return true;
-        }
+        $this->timeline = &$portfolio['timeline'];
 
-        if (count($this->timeline['snapshots_ids']) !== count($this->timeline['performance_chunks_ids'])) {
-            return true;
-        }
+        // if (!isset($this->timeline['snapshots_ids']) || !isset($this->timeline['performance_chunks_ids'])) {
+        //     return true;
+        // }
 
-        if (count(array_diff(array_keys($this->timeline['snapshots_ids']), array_keys($this->timeline['performance_chunks_ids']))) > 0) {
-            return true;
-        }
+        // if (count($this->timeline['snapshots_ids']) === 0 || count($this->timeline['performance_chunks_ids']) === 0) {
+        //     return true;
+        // }
 
-        if ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']) {
-            return true;
-        }
+        // if (count($this->timeline['snapshots_ids']) !== count($this->timeline['performance_chunks_ids'])) {
+        //     return true;
+        // }
+
+        // if (count(array_diff(array_keys($this->timeline['snapshots_ids']), array_keys($this->timeline['performance_chunks_ids']))) > 0) {
+        //     return true;
+        // }
+
+        // if ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']) {
+        //     return true;
+        // }
 
         return false;
     }
@@ -359,8 +441,14 @@ class MfPortfoliostimeline extends BasePackage
 
     public function getPortfolioTimelineDateByBrowseAction($portfolio, $data)
     {
+        $this->portfolio = $portfolio;
+
         if (isset($data['jump']) && isset($data['browse'])) {
-            $timelineDate = \Carbon\Carbon::parse($data['timelineDate']);
+            if (!isset($this->parsedCarbon[$data['timelineDate']])) {
+                $this->parsedCarbon[$data['timelineDate']] = \Carbon\Carbon::parse($data['timelineDate']);
+            }
+
+            $timelineDate = $this->parsedCarbon[$data['timelineDate']];
 
             if ($data['browse'] === 'transaction') {
                 if ($data['jump'] === 'previous') {
@@ -370,14 +458,18 @@ class MfPortfoliostimeline extends BasePackage
                 }
 
                 foreach ($portfolio['transactions'] as $transaction) {
+                    if (!isset($this->parsedCarbon[$transaction['date']])) {
+                        $this->parsedCarbon[$transaction['date']] = \Carbon\Carbon::parse($transaction['date']);
+                    }
+
                     if ($data['jump'] === 'previous') {
-                        if ((\Carbon\Carbon::parse($transaction['date']))->lt($timelineDate)) {
+                        if (($this->parsedCarbon[$transaction['date']])->lt($timelineDate)) {
                             $timelineDate = $transaction['date'];
 
                             break;
                         }
                     } else if ($data['jump'] === 'next') {
-                        if ((\Carbon\Carbon::parse($transaction['date']))->gt($timelineDate)) {
+                        if (($this->parsedCarbon[$transaction['date']])->gt($timelineDate)) {
                             $timelineDate = $transaction['date'];
 
                             break;
@@ -407,6 +499,8 @@ class MfPortfoliostimeline extends BasePackage
         } else {
             $timelineDate = $data['timelineDate'];
         }
+
+        $this->timeline = $portfolio['timeline'];
 
         $timelinePortfolio = $this->getPortfoliotimelineByPortfolioAndTimeline($portfolio, $timelineDate);
 
@@ -447,8 +541,8 @@ class MfPortfoliostimeline extends BasePackage
                 array_push($progressMethods,
                     [
                         'method'    => 'generatePortfolioTimeline',
-                        'text'      => 'Generate portfolio timeline for ' . $dateToProcess->toDateString() . '...',
-                        'args'      => [$dateToProcess->toDateString(), $forceRecalculateTimeline]
+                        'text'      => 'Generate portfolio timeline for ' . $dateToProcess . '...',
+                        'args'      => [$dateToProcess, $forceRecalculateTimeline]
                     ]
                 );
             }
@@ -482,102 +576,10 @@ class MfPortfoliostimeline extends BasePackage
 
         $this->schemePackage = $this->usePackage(MfSchemes::class);
 
-        $this->portfolio = $this->portfolioPackage->getPortfolioById((int) $data['portfolio_id']);
+        $this->portfolio = $this->portfolioPackage->getPortfolioById((int) $data['portfolio_id'], true);
 
         if (!$this->portfolio) {
             $this->addResponse('Portfolio ID provided incorrect!', 1);
-
-            return false;
-        }
-
-        foreach ($this->portfolio['transactions'] as $portfolioTransaction) {
-            array_push($this->portfolioTransactionsDates, $portfolioTransaction['date']);
-
-            if (!isset($this->portfolioSchemes[$portfolioTransaction['scheme_id']])) {
-                $scheme = $this->schemePackage->getSchemeFromAmfiCodeOrSchemeId($portfolioTransaction);
-
-                if (!$scheme || !isset($scheme['navs']['navs'])) {
-                    $this->addResponse('Scheme for portfolio transaction id: ' . $portfolioTransaction['id'] . ' does not exists!', 1);
-
-                    return false;
-                }
-
-                $this->portfolioSchemes[$portfolioTransaction['scheme_id']] = $scheme;
-            }
-
-        }
-
-        $this->timeline = $this->getPortfoliotimelineByPortfolio(['id' => $data['portfolio_id']], false);
-
-        if (isset($data['mode'])) {
-            $this->timeline['mode'] = $data['mode'];
-        }
-
-        if ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']) {
-            $recalculateFrom = $this->timeline['recalculate_from_date'];
-        } else {
-            $recalculateFrom = $this->portfolio['start_date'];
-        }
-
-        $endDate = $this->today;
-
-        if ((\Carbon\Carbon::parse($endDate))->gte(\Carbon\Carbon::parse($this->helper->first($this->portfolio['transactions'])['latest_value_date']))) {
-            $endDate = $this->helper->first($this->portfolio['transactions'])['latest_value_date'];
-        }
-
-        // $datesToProcess = [];
-
-        // if ($this->timeline['mode'] === 'transactions') {
-        //     $this->portfolio['transactions'] = msort(array: $this->portfolio['transactions'], key: 'latest_value_date', preserveKey: true, order: SORT_DESC);
-
-        //     $recalculateFrom = \Carbon\Carbon::parse($recalculateFrom);
-
-        //     foreach ($this->portfolio['transactions'] as $transaction) {
-        //         $recalculateFrom = \Carbon\Carbon::parse($recalculateFrom);
-        //         $transactionDate = \Carbon\Carbon::parse($transaction['date']);
-
-        //         if ($transactionDate->gte($recalculateFrom)) {
-        //             array_push($datesToProcess, $transactionDate->toDateString());
-        //         }
-        //     }
-        // } else {
-            $startEndDates = (\Carbon\CarbonPeriod::between($recalculateFrom, $endDate))->toArray();
-
-        //     foreach ($startEndDates as $startEndDate) {
-        //         if ($this->timeline['mode'] === 'monthly') {
-        //             if (in_array($startEndDate->month, $data['monthly_months'])) {
-        //                 if ($startEndDate->day == $data['monthly_day']) {
-        //                     array_push($datesToProcess, $startEndDate->toDateString());
-        //                 }
-        //             }
-        //         } else if ($this->timeline['mode'] === 'weekly') {
-        //             if (in_array($startEndDate->dayOfWeek(), $data['weekly_days'])) {
-        //                 array_push($datesToProcess, $startEndDate->toDateString());
-        //             }
-        //         }
-        //     }
-        // }
-        // array_push($datesToProcess, $endDate);
-
-        // $this->registerProgressMethods($datesToProcess, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
-
-        // $numberOfSnapshots = count($this->timeline['snapshots']);
-        // $numberOfPerformanceChunks = count($this->timeline['performance_chunks']);
-
-        // $numberOfDays = count($startEndDates);
-
-        // if ($numberOfSnapshots != $numberOfDays ||
-        //     $numberOfPerformanceChunks != $numberOfDays ||
-        //     ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date'])
-        // ) {
-            $this->registerProgressMethods($startEndDates, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
-
-        //     return true;
-        // }
-        $progressFile = $this->basepackages->progress->checkProgressFile('mfportfoliotimeline');
-
-        if (!$progressFile) {
-            $this->addResponse('Not able to add dates to timeline progress process, contact developer.', 1);
 
             return false;
         }
@@ -591,6 +593,118 @@ class MfPortfoliostimeline extends BasePackage
         if ((int) ini_get('memory_limit') < 1024) {
             ini_set('memory_limit', '1024M');
         }
+
+        $this->timeline = $this->portfolio['timeline'];
+
+        if (isset($data['mode'])) {
+            $this->timeline['mode'] = $data['mode'];
+        }
+
+        if ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']) {
+            $recalculateFrom = $this->timeline['recalculate_from_date'];
+        } else {
+            $recalculateFrom = $this->portfolio['start_date'];
+        }
+
+        $endDate = $this->today;
+
+        if (!isset($this->parsedCarbon[$endDate])) {
+            $this->parsedCarbon[$endDate] = \Carbon\Carbon::parse($endDate);
+        }
+        if (!isset($this->parsedCarbon[$this->helper->first($this->portfolio['transactions'])['latest_value_date']])) {
+            $this->parsedCarbon[$this->helper->first($this->portfolio['transactions'])['latest_value_date']] =
+                \Carbon\Carbon::parse($this->helper->first($this->portfolio['transactions'])['latest_value_date']);
+        }
+
+        if (($this->parsedCarbon[$endDate])->gte($this->parsedCarbon[$this->helper->first($this->portfolio['transactions'])['latest_value_date']])) {
+            $endDate = $this->helper->first($this->portfolio['transactions'])['latest_value_date'];
+        }
+
+        $datesToProcess = [];
+
+        $portfolioTransactions = msort(array: $this->portfolio['transactions'], key: 'latest_value_date', preserveKey: true, order: SORT_DESC);
+
+        foreach ($portfolioTransactions as $portfolioTransaction) {
+            // array_push($this->portfolioTransactionsDates, $portfolioTransaction['date']);
+            if (!isset($this->portfolioSchemes[$portfolioTransaction['scheme_id']])) {
+                $scheme = $this->schemePackage->getSchemeFromAmfiCodeOrSchemeId($portfolioTransaction);
+
+                if (!$scheme) {
+                // if (!$scheme || !isset($scheme['navs']['navs'])) {
+                    $this->addResponse('Scheme for portfolio transaction id: ' . $portfolioTransaction['id'] . ' does not exists!', 1);
+
+                    return false;
+                }
+
+                $this->portfolioSchemes[$portfolioTransaction['scheme_id']] = $scheme;
+            }
+
+            if ($this->timeline['mode'] === 'transactions') {
+                if (!isset($this->parsedCarbon[$recalculateFrom])) {
+                    $this->parsedCarbon[$recalculateFrom] = \Carbon\Carbon::parse($recalculateFrom);
+                }
+
+                if (!isset($this->parsedCarbon[$portfolioTransaction['date']])) {
+                    $this->parsedCarbon[$portfolioTransaction['date']] = \Carbon\Carbon::parse($portfolioTransaction['date']);
+                }
+
+                if (($this->parsedCarbon[$portfolioTransaction['date']])->gte($this->parsedCarbon[$recalculateFrom])) {
+                    $transactionDate = $this->parsedCarbon[$portfolioTransaction['date']]->toDateString();
+
+                    if (!in_array($transactionDate, $datesToProcess)) {
+                        array_push($datesToProcess, $transactionDate);
+                    }
+                }
+            }
+        }
+
+        if ($this->timeline['mode'] !== 'transactions') {
+            $startEndDates = (\Carbon\CarbonPeriod::between($recalculateFrom, $endDate))->toArray();
+
+            foreach ($startEndDates as $startEndDate) {
+                if ($this->timeline['mode'] === 'monthly') {
+                    if (in_array($startEndDate->month, $data['monthly_months'])) {
+                        if ($startEndDate->day == $data['monthly_day']) {
+                            array_push($datesToProcess, $startEndDate->toDateString());
+                        }
+                    }
+                } else if ($this->timeline['mode'] === 'weekly') {
+                    if (in_array($startEndDate->dayOfWeek(), $data['weekly_days'])) {
+                        array_push($datesToProcess, $startEndDate->toDateString());
+                    }
+                } else if ($this->timeline['mode'] === 'daily') {
+                    array_push($datesToProcess, $startEndDate->toDateString());
+                }
+            }
+        }
+
+        array_push($datesToProcess, $endDate);
+        // trace([$datesToProcess, array_reverse($datesToProcess)]);
+        // $datesToProcess = ['2018-11-01'];
+        $this->registerProgressMethods($datesToProcess, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
+
+        // $numberOfSnapshots = count($this->timeline['snapshots']);
+        // $numberOfPerformanceChunks = count($this->timeline['performance_chunks']);
+
+        // $numberOfDays = count($startEndDates);
+
+        // if ($numberOfSnapshots != $numberOfDays ||
+        //     $numberOfPerformanceChunks != $numberOfDays ||
+        //     ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date'])
+        // ) {
+        //     $this->registerProgressMethods($startEndDates, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
+
+        //     return true;
+        // }
+        $progressFile = $this->basepackages->progress->checkProgressFile('mfportfoliotimeline');
+
+        if (!$progressFile) {
+            $this->addResponse('Not able to add dates to timeline progress process, contact developer.', 1);
+
+            return false;
+        }
+
+        $this->switchModel($this->snapshotsModel);
 
         foreach ($progressFile['allProcesses'] as $process) {
             $this->portfolioPackage = $this->usePackage(MfPortfolios::class);
@@ -608,8 +722,8 @@ class MfPortfoliostimeline extends BasePackage
         // trace(['me']);
         // $this->timeline['snapshots_ids'] = msort(array: $this->timeline['snapshots_ids'], key: 'timelineDate', preserveKey: true);
         // $this->timeline['performance_chunks_ids'] = msort(array: $this->timeline['performance_chunks_ids'], key: 'timelineDate', preserveKey: true);
-        $this->timeline['recalculate'] = null;
-        $this->timeline['recalculate_from_date'] = null;
+        // $this->timeline['recalculate'] = null;
+        // $this->timeline['recalculate_from_date'] = null;
 
         //Process Snapshots
         // $this->switchModel($this->snapshotsModel);
@@ -684,25 +798,28 @@ class MfPortfoliostimeline extends BasePackage
         // }
 
         //Update Timeline
-        $this->switchModel();
+        // $this->switchModel();
         // $this->setModelToUse($this->modelToUse = AppsFintechMfPortfoliostimeline::class);
 
         // $this->packageName = 'mfportfoliostimeline';
 
-        if ($this->config->databasetype !== 'db') {
-            $this->ffStore = null;
+        // if ($this->config->databasetype !== 'db') {
+        //     $this->ffStore = null;
+        // }
+
+        $this->switchModel();
+        try {
+            $this->localContent->write(
+                '.ff/sp/apps_fintech_mf_portfoliostimeline/data/' . $this->timeline['id'] . '.json',
+                $this->helper->encode($this->timeline)
+            );
+        } catch (FilesystemException | UnableToWriteFile | \throwable $e) {
+            $this->addResponse($e->getMessage(), 1);
+
+            return false;
         }
 
-        if ($this->update($this->timeline)) {
-            //Reset to opcache
-            // if ($this->opCache) {
-            //     $this->opCache->resetCache($this->timeline['id'], $this->timeline, 'mfportfoliostimeline');
-            // }
-
-            return true;
-        }
-
-        return false;
+        return true;
     }
 
     protected function generatePortfolioTimeline($args)
@@ -711,12 +828,12 @@ class MfPortfoliostimeline extends BasePackage
         $forceRecalculateTimeline = $args[1];
 
         $this->timelineDateBeingProcessed = $dateToProcess;
-
+        // try {
         if (!isset($this->timeline['snapshots'][$dateToProcess]) ||
             !isset($this->timeline['performance_chunks'][$dateToProcess]) ||
             $forceRecalculateTimeline
         ) {
-            $this->basepackages->utils->setMicroTimer('Snapshot Start - ' . $dateToProcess, true);
+            // $this->basepackages->utils->setMicroTimer('Snapshot Start - ' . $dateToProcess, true);
 
             $snapshot = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $this->portfolio['id']], false, $this);
             // if (in_array($dateToProcess, $this->portfolioTransactionsDates)) {
@@ -735,48 +852,123 @@ class MfPortfoliostimeline extends BasePackage
                 return false;
             }
 
-            $this->basepackages->utils->setMicroTimer('Snapshot End - ' . $dateToProcess, true);
-            // var_Dump($this->basepackages->utils->getMicroTimer());
-            $this->basepackages->utils->resetMicroTimer();
+            unset($snapshot['timeline']);
+            unset($snapshot['strategies']);
 
-            $this->switchModel($this->snapshotsModel);
+            // $this->basepackages->utils->setMicroTimer('Snapshot End - ' . $dateToProcess, true);
+            // var_Dump($this->basepackages->utils->getMicroTimer());
+            // $this->basepackages->utils->resetMicroTimer();
+            // $this->basepackages->utils->setMicroTimer('Save Snapshot Start - ' . $dateToProcess, true);
 
             $timelineSnapshot = [];
-            if (isset($this->timeline['snapshots_ids'][$dateToProcess])) {
-                // $timelineSnapshotArr = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
-                $timelineSnapshot = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
-
-                // if ($timelineSnapshotArr) {
-                //     if ($forceRecalculateTimeline) {
-                //         $timelineSnapshot['id'] = $timelineSnapshotArr['id'];//Remove everything else.
-                //     } else {
-                //         $timelineSnapshot = $timelineSnapshotArr;
-                //     }
-                // }
-            }
-
             $timelineSnapshot['timeline_id'] = $this->timeline['id'];
             $timelineSnapshot['date'] = $dateToProcess;
+
+            foreach ($snapshot['transactions'] as &$snapshotTransactions) {
+                if ($snapshotTransactions['transactions'] &&
+                    count($snapshotTransactions['transactions']) > 0
+                ) {
+                    foreach ($snapshotTransactions['transactions'] as $snapshotTransactionsTransactionkey => $snapshotTransactionsTransaction) {
+                        if (!isset($this->parsedCarbon[$snapshotTransactionsTransaction['date']])) {
+                            $this->parsedCarbon[$snapshotTransactionsTransaction['date']] = \Carbon\Carbon::parse($snapshotTransactionsTransaction['date']);
+                        }
+                        if (!isset($this->parsedCarbon[$dateToProcess])) {
+                            $this->parsedCarbon[$dateToProcess] = \Carbon\Carbon::parse($dateToProcess);
+                        }
+
+                        if (($this->parsedCarbon[$snapshotTransactionsTransaction['date']])->gt(\Carbon\Carbon::parse($dateToProcess))) {
+                            unset($snapshotTransactions['transactions'][$snapshotTransactionsTransactionkey]);
+                        }
+                    }
+                }
+            }
+
             $timelineSnapshot['snapshot'] = $snapshot;
 
-            if (isset($timelineSnapshot['id'])) {
-                $this->update($timelineSnapshot);
+            if (isset($this->timeline['snapshots_ids'][$dateToProcess])) {
+                try {
+                    if ($this->localContent->fileExists('.ff/sp/apps_fintech_mf_portfoliostimeline_snapshots/data/' . $this->timeline['snapshots_ids'][$dateToProcess] . '.json')) {
+                        $timelineSnapshot['snapshot']['id'] = $this->timeline['snapshots_ids'][$dateToProcess];
+
+                        $this->localContent->write(
+                            '.ff/sp/apps_fintech_mf_portfoliostimeline_snapshots/data/' . $this->timeline['snapshots_ids'][$dateToProcess] . '.json',
+                            $this->helper->encode($timelineSnapshot)
+                        );
+                    }
+                } catch (FilesystemException | UnableToCheckExistence | UnableToWriteFile | \throwable $e) {
+                    $this->addResponse($e->getMessage(), 1);
+
+                    return false;
+                }
+            //     // $timelineSnapshotArr = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
+                // $timelineSnapshot['id'] = $this->timeline['snapshots_ids'][$dateToProcess];
+            //     // $timelineSnapshot = $this->getById((int) $this->timeline['snapshots_ids'][$dateToProcess]);
+
+            //     // if ($timelineSnapshotArr) {
+            //     //     if ($forceRecalculateTimeline) {
+            //     //         $timelineSnapshot['id'] = $timelineSnapshotArr['id'];//Remove everything else.
+            //     //     } else {
+            //     //         $timelineSnapshot = $timelineSnapshotArr;
+            //     //     }
+            //     // }
+                // $this->update($timelineSnapshot);
             } else {
-                $this->add($timelineSnapshot);
+                $timelineSnapshot['snapshot']['id'] = $this->getLastInsertedId() + 1;
+
+                try {
+                    $this->localContent->write(
+                        '.ff/sp/apps_fintech_mf_portfoliostimeline_snapshots/data/' . $timelineSnapshot['snapshot']['id'] . '.json',
+                        $this->helper->encode($timelineSnapshot)
+                    );
+
+                    $this->ffStore->count(true);
+                } catch (FilesystemException | UnableToWriteFile | \throwable $e) {
+                    $this->addResponse($e->getMessage(), 1);
+
+                    return false;
+                }
+
+                if ($this->getLastInsertedId() !== $timelineSnapshot['snapshot']['id']) {
+                    $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
+
+                    return false;
+                }
             }
+            // trace(['me']);
 
-            if (!isset($this->packagesData->last['id'])) {
-                $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
+            $this->timeline['snapshots_ids'][$dateToProcess] = $timelineSnapshot['snapshot']['id'];
 
-                return false;
-            }
+            // if (!$this->createSnapshotChunks($timelineSnapshot, $forceRecalculateTimeline)) {
+            //     return false;
+            // }
 
-            $this->timeline['snapshots_ids'][$dateToProcess] = $this->packagesData->last['id'];
+            // $this->switchModel();
+            // try {
+            //     $this->localContent->write(
+            //         '.ff/sp/apps_fintech_mf_portfoliostimeline/data/' . $this->timeline['id'] . '.json',
+            //         $this->helper->encode($this->timeline)
+            //     );
+            // } catch (FilesystemException | UnableToWriteFile | \throwable $e) {
+            //     $this->addResponse($e->getMessage(), 1);
 
-            if (!$this->createSnapshotChunks($timelineSnapshot, $forceRecalculateTimeline)) {
-                return false;
-            }
+            //     return false;
+            // }
+            // if (!$this->update($this->timeline)) {
+            //     return false;
+            // }
         }
+
+        // $this->basepackages->utils->setMicroTimer('Save Snapshot End - ' . $dateToProcess, true);
+        // var_Dump($this->basepackages->utils->getMicroTimer());
+        // $this->basepackages->utils->resetMicroTimer();
+        // } catch (\throwable $e) {
+        //     trace([$e]);
+        // }
+        // trace([$dateToProcess]);
+            // if ($dateToProcess === '2017-10-31') {
+            // if ($dateToProcess === '2025-08-01') {
+                // trace(['me']);
+            // }
 
         return true;
     }
@@ -1006,7 +1198,9 @@ class MfPortfoliostimeline extends BasePackage
         }
 
         if ($this->config->databasetype !== 'db') {
-            $this->ffStore = null;
+            $this->ffStore = $this->ff->store($this->ffStoreToUse);
+
+            $this->ffStore->setValidateData(false);
         }
     }
 }

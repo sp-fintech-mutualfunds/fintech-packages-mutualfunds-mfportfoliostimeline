@@ -22,37 +22,12 @@ class MfPortfoliostimelinePerformanceChunks
                     ]
                 ),
                 new Column(
-                    'timeline_id',
-                    [
-                        'type'          => Column::TYPE_INTEGER,
-                        'notNull'       => true,
-                    ]
-                ),
-                new Column(
-                    'date',
-                    [
-                        'type'          => Column::TYPE_VARCHAR,
-                        'size'          => 15,
-                        'notNull'       => true
-                    ]
-                ),
-                new Column(
-                    'performance_chunk',
+                    'performance_chunks',
                     [
                         'type'          => Column::TYPE_JSON,
                         'notNull'       => true,
                     ]
                 ),
-            ],
-            'indexes' => [
-                new Index(
-                    'column_UNIQUE',
-                    [
-                        'timeline_id',
-                        'date'
-                    ],
-                    'UNIQUE'
-                )
             ],
             'options' => [
                 'TABLE_COLLATION' => 'utf8mb4_general_ci'

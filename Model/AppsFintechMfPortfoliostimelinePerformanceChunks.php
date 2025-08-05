@@ -8,9 +8,5 @@ class AppsFintechMfPortfoliostimelinePerformanceChunks extends BaseModel
 {
     public $id;
 
-    public $timeline_id;
-
-    public $date;
-
-    public $performance_chunk;
+    public $performance_chunks;
 }
