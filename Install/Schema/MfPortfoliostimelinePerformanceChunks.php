@@ -22,6 +22,13 @@ class MfPortfoliostimelinePerformanceChunks
                     ]
                 ),
                 new Column(
+                    'timeline_id',
+                    [
+                        'type'          => Column::TYPE_INTEGER,
+                        'notNull'       => true,
+                    ]
+                ),
+                new Column(
                     'performance_chunks',
                     [
                         'type'          => Column::TYPE_JSON,

@@ -50,42 +50,42 @@ class MfPortfoliostimeline
                         'notNull'       => true,
                     ]
                 ),
-                new Column(
-                    'performance_chunks_ids',
-                    [
-                        'type'          => Column::TYPE_JSON,
-                        'notNull'       => true,
-                    ]
-                ),
-                new Column(
-                    'mode',
-                    [
-                        'type'          => Column::TYPE_VARCHAR,
-                        'size'          => 15,
-                        'notNull'       => true
-                    ]
-                ),
-                new Column(
-                    'monthly_months',
-                    [
-                        'type'          => Column::TYPE_JSON,
-                        'notNull'       => false
-                    ]
-                ),
-                new Column(
-                    'monthly_day',
-                    [
-                        'type'          => Column::TYPE_TINYINTEGER,
-                        'notNull'       => false
-                    ]
-                ),
-                new Column(
-                    'weekly_days',
-                    [
-                        'type'          => Column::TYPE_JSON,
-                        'notNull'       => false
-                    ]
-                ),
+                // new Column(
+                //     'performance_chunks_id',
+                //     [
+                //         'type'          => Column::TYPE_INTEGER,
+                //         'notNull'       => false,
+                //     ]
+                // ),
+                // new Column(
+                //     'mode',
+                //     [
+                //         'type'          => Column::TYPE_VARCHAR,
+                //         'size'          => 15,
+                //         'notNull'       => true
+                //     ]
+                // ),
+                // new Column(
+                //     'monthly_months',
+                //     [
+                //         'type'          => Column::TYPE_JSON,
+                //         'notNull'       => false
+                //     ]
+                // ),
+                // new Column(
+                //     'monthly_day',
+                //     [
+                //         'type'          => Column::TYPE_TINYINTEGER,
+                //         'notNull'       => false
+                //     ]
+                // ),
+                // new Column(
+                //     'weekly_days',
+                //     [
+                //         'type'          => Column::TYPE_JSON,
+                //         'notNull'       => false
+                //     ]
+                // ),
             ],
             'indexes' => [
                 new Index(
