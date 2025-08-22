@@ -166,16 +166,6 @@ class MfPortfoliostimeline extends BasePackage
 
     public function getPortfoliotimelineByPortfolioAndTimeline($portfolio, $getTimelineDate = null, $force = false)
     {
-        //Increase Exectimeout to 10 mins as this process takes time to extract and merge data.
-        // if ((int) ini_get('max_execution_time') < 600) {
-        //     set_time_limit(600);
-        // }
-
-        // //Increase memory_limit to 1G as the process takes a bit of memory to process the array.
-        // if ((int) ini_get('memory_limit') < 1024) {
-        //     ini_set('memory_limit', '1024M');
-        // }
-
         if (!isset($portfolio['timeline'])) {
             $this->getPortfoliotimelineByPortfolio($portfolio);
 
@@ -287,23 +277,8 @@ class MfPortfoliostimeline extends BasePackage
             $timelineSnapshot['timeline_id'] = $this->timeline['id'];
             $timelineSnapshot['date'] = $getTimelineDate;
             $timelineSnapshot['snapshot'] = $timelinePortfolio;
-
-            // if (isset($timelineSnapshot['id'])) {
-            //     $this->update($timelineSnapshot);
-            // } else {
-            //     $this->add($timelineSnapshot);
-            // }
-
-            // if (!isset($this->packagesData->last['id'])) {
-            //     $this->addResponse('Could not insert/update timeline snapshot, contact developer', 1);
-
-            //     return false;
-            // }
-
-            // $this->timeline['snapshots_ids'][$getTimelineDate] = $this->packagesData->last['id'];
-
             $timelineSnapshot['snapshot']['id'] = $this->getLastInsertedId() + 1;
-            // trace([$timelineSnapshot['snapshot']['id']]);
+
             try {
                 $this->localContent->write(
                     '.ff/sp/apps_fintech_mf_portfoliostimeline_snapshots/data/' . $timelineSnapshot['snapshot']['id'] . '.json',
@@ -324,10 +299,6 @@ class MfPortfoliostimeline extends BasePackage
             }
 
             $this->timeline['snapshots_ids'][$getTimelineDate] = $timelineSnapshot['snapshot']['id'];
-
-            // if (!$this->createSnapshotChunks($timelineSnapshot, $force)) {
-            //     return false;
-            // }
         }
 
         if ($timelinePortfolio) {
@@ -361,7 +332,6 @@ class MfPortfoliostimeline extends BasePackage
 
     public function timelineNeedsGeneration($portfolio)
     {
-        // return true;
         $this->portfolio = $portfolio;
 
         if (!isset($portfolio['timeline'])) {
@@ -621,7 +591,6 @@ class MfPortfoliostimeline extends BasePackage
         $datesToProcess = [];
 
         $portfolioTransactions = msort(array: $this->portfolio['transactions'], key: 'latest_value_date', preserveKey: true, order: SORT_DESC);
-
         foreach ($portfolioTransactions as $portfolioTransaction) {
             if (!isset($this->portfolioSchemes[$portfolioTransaction['scheme_id']])) {
                 $scheme = $this->schemePackage->getSchemeFromAmfiCodeOrSchemeId($portfolioTransaction, true);
@@ -690,7 +659,7 @@ class MfPortfoliostimeline extends BasePackage
         }
 
         //Need to add dates for chunks.
-        foreach (['week', 'month', 'threeMonth', 'sixMonth', 'year', 'threeYear', 'fiveYear', 'tenYear'] as $time) {
+        foreach (['week', 'month', 'threeMonth', 'sixMonth', 'year', 'threeYear', 'fiveYear', 'tenYear', 'fifteenYear', 'twentyYear', 'twentyFiveYear', 'thirtyYear', 'all'] as $time) {
             $latestDate = \Carbon\Carbon::parse($endDate);
 
             $timeDate = null;
@@ -711,6 +680,14 @@ class MfPortfoliostimeline extends BasePackage
                 $latestDate->subYear(5);
             } else if ($time === 'tenYear') {
                 $latestDate->subYear(10);
+            } else if ($time === 'fifteenYear') {
+                $latestDate->subYear(15);
+            } else if ($time === 'twentyYear') {
+                $latestDate->subYear(20);
+            } else if ($time === 'twentyFiveYear') {
+                $latestDate->subYear(25);
+            } else if ($time === 'thirtyYear') {
+                $latestDate->subYear(30);
             }
 
             if (($latestDate)->lt($this->parsedCarbon[$recalculateFrom])) {
@@ -725,9 +702,7 @@ class MfPortfoliostimeline extends BasePackage
         }
 
         sort($datesToProcess);
-        // trace([$datesToProcess]);
-        // trace([array_reverse($datesToProcess)]);
-        // $datesToProcess = ['2018-11-01'];
+
         $this->registerProgressMethods($datesToProcess, ($this->timeline['recalculate'] && $this->timeline['recalculate_from_date']));
 
         $progressFile = $this->basepackages->progress->checkProgressFile('mfportfoliotimeline');
@@ -767,8 +742,8 @@ class MfPortfoliostimeline extends BasePackage
         $forceRecalculateTimeline = $args[1];
 
         $this->timelineDateBeingProcessed = $dateToProcess;
+
         if (!isset($this->timeline['snapshots'][$dateToProcess]) || $forceRecalculateTimeline) {
-            // $this->basepackages->utils->setMicroTimer('Snapshot Start - ' . $dateToProcess, true);
             $snapshot = $this->portfolioPackage->recalculatePortfolio(['portfolio_id' => $this->portfolio['id']], false, $this);
 
             if (!isset($snapshot) || !$snapshot) {
@@ -786,11 +761,6 @@ class MfPortfoliostimeline extends BasePackage
             if (isset($snapshot['performances_chunks'])) {
                 unset($snapshot['performances_chunks']);
             }
-
-            // $this->basepackages->utils->setMicroTimer('Snapshot End - ' . $dateToProcess, true);
-            // var_Dump($this->basepackages->utils->getMicroTimer());
-            // $this->basepackages->utils->resetMicroTimer();
-            // $this->basepackages->utils->setMicroTimer('Save Snapshot Start - ' . $dateToProcess, true);
 
             $timelineSnapshot = [];
             $timelineSnapshot['timeline_id'] = $this->timeline['id'];
@@ -914,7 +884,7 @@ class MfPortfoliostimeline extends BasePackage
         if ($this->timeline['snapshots_ids'] && count($this->timeline['snapshots_ids']) > 0) {
             $datesKeys = array_keys($this->timeline['snapshots_ids']);
 
-            foreach (['week', 'month', 'threeMonth', 'sixMonth', 'year', 'threeYear', 'fiveYear', 'tenYear', 'all'] as $time) {
+            foreach (['week', 'month', 'threeMonth', 'sixMonth', 'year', 'threeYear', 'fiveYear', 'tenYear', 'fifteenYear', 'twentyYear', 'twentyFiveYear', 'thirtyYear', 'all'] as $time) {
                 if ($time !== 'all') {
                     $latestDate = \Carbon\Carbon::parse($this->helper->lastKey($this->timeline['snapshots_ids']));
 
@@ -936,6 +906,14 @@ class MfPortfoliostimeline extends BasePackage
                         $timeDate = $latestDate->subYear(5);
                     } else if ($time === 'tenYear') {
                         $timeDate = $latestDate->subYear(10);
+                    } else if ($time === 'fifteenYear') {
+                        $timeDate = $latestDate->subYear(15);
+                    } else if ($time === 'twentyYear') {
+                        $timeDate = $latestDate->subYear(20);
+                    } else if ($time === 'twentyFiveYear') {
+                        $timeDate = $latestDate->subYear(25);
+                    } else if ($time === 'thirtyYear') {
+                        $timeDate = $latestDate->subYear(30);
                     }
 
                     if (!isset($this->parsedCarbon[$this->portfolio['start_date']])) {
